@@ -1,0 +1,11 @@
+<library path="moveit2_extended_core_behaviors">
+  <class name="moveit2_extended::behaviors::CoreBehaviorsLoader"
+         type="moveit2_extended::behaviors::CoreBehaviorsLoader"
+         base_class_type="moveit2_extended::BehaviorLoaderBase">
+    <description>
+      Behaviors that ship with moveit2_extended_core: LogMessage, WaitForDuration and
+      CheckBlackboardValue. Enough to build and run a tree on a machine with no robot, which is
+      what the smoke test needs.
+    </description>
+  </class>
+</library>

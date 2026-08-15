@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>moveit2_extended_core</name>
+  <version>0.1.0</version>
+  <description>
+    The Objective/Behavior layer for MoveIt 2: a BehaviorContext, the Behavior base classes, the
+    pluginlib loader seam, and the Objective server that loads Behavior plugins and runs
+    BehaviorTree XML "Objectives".
+
+    Built against BehaviorTree.CPP v3.8 because that is what Nav2 pulls into this system; v3 and v4
+    share the namespace BT with incompatible layouts, so a process linking both corrupts its heap
+    rather than failing to link. Version-specific spellings are confined to bt_compat.hpp.
+  </description>
+  <maintainer email="cheesiang_leow@alps-lab.org">Leow Chee Siang</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>moveit2_extended_msgs</depend>
+  <depend>behaviortree_cpp_v3</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
+  <depend>pluginlib</depend>
+  <depend>ament_index_cpp</depend>
+  <depend>moveit_core</depend>
+  <depend>moveit_ros_planning</depend>
+  <depend>moveit_ros_planning_interface</depend>
+  <depend>tf2_ros</depend>
+  <depend>geometry_msgs</depend>
+  <depend>rcl_interfaces</depend>
+  <depend>yaml-cpp</depend>
+  <depend>tinyxml2_vendor</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <moveit2_extended_core plugin="${prefix}/behavior_loader_plugin_description.xml"/>
+  </export>
+</package>

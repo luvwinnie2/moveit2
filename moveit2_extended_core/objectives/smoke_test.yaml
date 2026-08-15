@@ -1,0 +1,12 @@
+# Sidecar metadata for smoke_test.xml.
+#
+# This lives beside the XML rather than inside it because BehaviorTree.CPP v3's VerifyXML rejects
+# any child of <root> other than BehaviorTree, TreeNodesModel and include -- there is nowhere legal
+# in the tree file to put it.
+description: >
+  Exercises the core Behaviors with no robot attached: logging, a timed wait, blackboard
+  substitution and a Fallback. Used to prove the server works before any MoveIt Behavior exists.
+required_parameters:
+  - caller
+optional_parameters:
+  - wait_seconds

@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<!-- Uses only Behaviors that ship with the core, so this runs on a machine with no robot, no
+     move_group and no other package installed. That is the point: it proves the pluginlib +
+     registerBuilder seam, the tick loop, the blackboard seeding and the halt path in isolation,
+     before anything that needs MoveIt is in the picture. -->
+<root main_tree_to_execute="SmokeTest">
+  <BehaviorTree ID="SmokeTest">
+    <Sequence name="root">
+      <LogMessage message="smoke test starting, caller={caller}" level="info"/>
+
+      <!-- Long enough that a cancel arriving mid-run lands here, which is what the cancel test
+           relies on. -->
+      <WaitForDuration duration="{wait_seconds}"/>
+
+      <Fallback name="check_caller">
+        <CheckBlackboardValue value="{caller}" equals="nobody"/>
+        <LogMessage message="caller was not 'nobody', so the fallback branch ran" level="warn"/>
+      </Fallback>
+
+      <LogMessage message="smoke test finished" level="info"/>
+    </Sequence>
+  </BehaviorTree>
+</root>

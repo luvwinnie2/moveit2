@@ -1,0 +1,13 @@
+# Declares which Behavior loader plugins this package provides.
+#
+# The Objective server finds this file through the ament index resource
+# "moveit2_extended_behavior_plugin" and loads exactly the classes listed here -- not every
+# pluginlib class it can see. Adding a Behavior package therefore requires no edit to any other
+# package, and a package for a different robot cannot get dlopen'd into this server by accident.
+#
+# The package name is the map key rather than a flat list so that an ID collision can be reported
+# as "package A vs package B", a deployment can exclude one package by name, and one package can
+# ship several loaders and have them gated separately.
+behavior_loader_plugins:
+  moveit2_extended_core:
+    - moveit2_extended::behaviors::CoreBehaviorsLoader

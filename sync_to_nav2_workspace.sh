@@ -23,6 +23,7 @@ DEST="$WS/src"
 PACKAGES=(
   moveit_cable_carrier
   moveit2_extended_msgs
+  moveit2_extended_core
 )
 
 if [[ ! -d "$DEST" ]]; then

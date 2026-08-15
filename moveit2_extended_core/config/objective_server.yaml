@@ -1,0 +1,38 @@
+# Defaults for a standalone objective server -- no robot, core Behaviors only.
+#
+# A robot deployment overrides objective_directories and behavior_parameter_files from its own
+# site package and leaves the rest alone.
+/**:
+  ros__parameters:
+    objective_directories:
+      - "package://moveit2_extended_core/objectives"
+    objective_directories_recursive: false
+
+    # ament_index: every installed package that registered the
+    # "moveit2_extended_behavior_plugin" resource gets its listed loaders loaded.
+    #   explicit: only behavior_loader_plugins below.
+    #   both:     the union.
+    behavior_loader_discovery: "ament_index"
+
+    # NOTE: do not write "some_list: []" here. ROS 2 cannot infer the element type of an empty
+    # YAML sequence, and loading such a file kills the node at startup with
+    # "parameter_value_from failed ... No parameter value set". The defaults declared in C++
+    # already cover these, so an entry is only needed when it is non-empty:
+    #   behavior_loader_plugins            (used with discovery: explicit | both)
+    #   behavior_loader_packages_exclude
+    #   behavior_parameter_files
+
+    # Packages listed here load first, so which package wins an ID collision is the same on every
+    # machine instead of depending on directory iteration order.
+    behavior_loader_load_order:
+      - "moveit2_extended_core"
+
+    tick_period_ms: 20
+    default_objective_timeout: 0.0
+
+    # Off by default so the server comes up on a machine where move_group is not running. A robot
+    # deployment turns this on.
+    start_planning_scene_monitor: false
+    default_planning_group: "arm"
+    robot_description_param: "robot_description"
+    moveit_connect_timeout: 10.0
