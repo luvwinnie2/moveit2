@@ -1,0 +1,16 @@
+# Check a tree without saving or running it. The browser editor calls this on every save, and may
+# call it while typing.
+#
+# Three separate checks, reported separately because they need different fixes:
+#   - XML that BehaviorTree.CPP's own VerifyXML rejects        -> xml_error
+#   - nodes the factory has no builder for                     -> missing_behaviors
+#   - ports named on a node that the node does not declare     -> unknown_ports
+string xml
+---
+bool valid
+# Empty when the XML itself parsed. Otherwise the parser's message, which names the line.
+string xml_error
+string[] missing_behaviors
+# Formatted as "NodeInstanceName.port_name" so the editor can highlight the offending field.
+string[] unknown_ports
+string[] tree_ids

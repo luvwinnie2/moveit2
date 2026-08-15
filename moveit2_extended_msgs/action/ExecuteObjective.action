@@ -1,0 +1,54 @@
+# Run one Objective (a BehaviorTree) to completion.
+#
+# Goal ------------------------------------------------------------------------
+# Name of a registered Objective. Ignored when objective_xml is non-empty.
+string objective_name
+# Inline tree, for a scratch run from the editor before the XML is saved. When set, the tree is
+# built from this text and objective_name is used only for labelling.
+string objective_xml
+# Written to the tree's blackboard before the first tick. Every value is stringified on the way in:
+# BehaviorTree.CPP converts a string blackboard entry to the port's declared type on read, so this
+# needs no type registry and works for ports this package has never heard of.
+rcl_interfaces/Parameter[] parameters
+# Blackboard keys to read back into Result.outputs when the tree finishes.
+string[] export_keys
+# Seconds before the run is halted and reported as TIMEOUT. 0 = no limit.
+float64 timeout
+---
+# Result ----------------------------------------------------------------------
+uint8 SUCCESS=0
+uint8 UNKNOWN_OBJECTIVE=1
+uint8 XML_PARSE_ERROR=2
+# The tree references a node ID that no loaded Behavior plugin registered. Checked before the tree
+# is built so the missing names can be reported instead of a raw BehaviorTree.CPP exception string.
+uint8 MISSING_BEHAVIOR=3
+uint8 BEHAVIOR_FAILURE=4
+uint8 BEHAVIOR_EXCEPTION=5
+uint8 CANCELED=6
+uint8 TIMEOUT=7
+uint8 SERVER_BUSY=8
+uint8 INVALID_PARAMETER=9
+
+bool success
+uint8 error_code
+string error_message
+# The deepest FAILURE leaf -- the Behavior that actually failed, rather than the Sequence that
+# reported it upwards.
+string failed_behavior_name
+string failed_behavior_registration
+uint16 failed_behavior_uid
+string[] missing_behaviors
+rcl_interfaces/Parameter[] outputs
+builtin_interfaces/Duration execution_time
+uint32 tick_count
+---
+# Feedback --------------------------------------------------------------------
+string tree_instance_id
+# BehaviorStatus constants, applied to the root node.
+uint8 tree_status
+# Only the nodes whose status changed since the previous feedback message.
+BehaviorStatus[] changed
+# The deepest RUNNING leaf: the one-line "what is it doing right now" string.
+string current_behavior
+builtin_interfaces/Duration elapsed
+uint32 tick_count

@@ -1,0 +1,4 @@
+# Substring match on the name; empty returns everything.
+string name_filter
+---
+ObjectiveInfo[] objectives

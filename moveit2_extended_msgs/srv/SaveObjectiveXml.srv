@@ -1,0 +1,21 @@
+# Write an edited Objective back to disk.
+#
+# The server validates before writing and refuses to save anything that would not build, so the
+# editor cannot leave an Objective on disk that the server then cannot load. It also copies the
+# previous contents to <file>.bak first: the editor emits normalised XML, so comments and hand
+# formatting in the original do not survive a round trip.
+string name
+string xml
+# Path to write. Empty means "where this Objective already lives"; required when creating one.
+string file_path
+# Re-scan and re-register afterwards, so the saved tree is immediately runnable.
+bool reload
+---
+bool success
+string message
+string written_path
+string backup_path
+# Populated when success is false because validation failed.
+string xml_error
+string[] missing_behaviors
+string[] unknown_ports

@@ -1,0 +1,6 @@
+# Re-scan the objective directories. Refused while an Objective is running, because the running
+# tree holds pointers into the registered definitions.
+---
+bool success
+string message
+uint32 num_objectives

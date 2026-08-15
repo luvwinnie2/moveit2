@@ -1,0 +1,5 @@
+---
+BehaviorInfo[] behaviors
+# BehaviorTree.CPP's own TreeNodesModel for the whole factory. Paste into Groot 1 to get its node
+# palette, or ignore it and use the behaviors array above.
+string tree_nodes_model_xml

@@ -1,0 +1,7 @@
+string name
+---
+bool found
+# The XML exactly as it is on disk, comments and formatting intact. The editor round-trips through
+# this, so anything lost here is lost for good.
+string xml
+ObjectiveInfo info
