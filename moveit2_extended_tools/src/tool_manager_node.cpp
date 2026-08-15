@@ -53,8 +53,16 @@ public:
       }
     }
 
+    // The planning-scene client gets its OWN callback group, and this is not optional.
+    //
+    // fitTool() waits on the response from inside a service callback. With the client in the
+    // default (mutually exclusive) group, the executor cannot deliver that response while the
+    // service callback is still running, so the wait times out every time and the tool never
+    // changes -- which is exactly what happened the first time this ran.
+    scene_callback_group_ = node_->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
     scene_client_ = node_->create_client<moveit_msgs::srv::ApplyPlanningScene>(
-        node_->get_parameter("apply_planning_scene_service").as_string());
+        node_->get_parameter("apply_planning_scene_service").as_string(), rmw_qos_profile_services_default,
+        scene_callback_group_);
 
     using namespace std::placeholders;
     switch_srv_ = node_->create_service<srvs::SwitchTool>("~/switch", std::bind(&ToolManager::onSwitch, this, _1, _2));
@@ -236,6 +244,7 @@ private:
   ToolRegistry registry_;
   std::string active_;
 
+  rclcpp::CallbackGroup::SharedPtr scene_callback_group_;
   rclcpp::Client<moveit_msgs::srv::ApplyPlanningScene>::SharedPtr scene_client_;
   rclcpp::Service<srvs::SwitchTool>::SharedPtr switch_srv_;
   rclcpp::Service<srvs::ListTools>::SharedPtr list_srv_;
