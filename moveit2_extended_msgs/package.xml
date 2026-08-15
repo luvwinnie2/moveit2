@@ -24,6 +24,10 @@
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
+  <!-- Pure IDL, like the rest of these: moveit_msgs is a message package, it does not
+       drag MoveIt itself in. The GPU planning service answers with a plain
+       moveit_msgs/RobotTrajectory so a GPU plan is a drop-in for an OMPL one. -->
+  <depend>moveit_msgs</depend>
 
   <exec_depend>rosidl_default_runtime</exec_depend>
   <member_of_group>rosidl_interface_packages</member_of_group>

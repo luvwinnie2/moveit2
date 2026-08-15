@@ -1,0 +1,34 @@
+# Solve many IK queries at once on the GPU.
+#
+# This is the query shape a GPU is actually good at, and the one this robot has: choosing where to
+# cut a grape cluster means proposing dozens of candidate poses around it and asking which are
+# reachable. One-at-a-time IK pays its fixed cost per query; here it is paid once for the batch.
+#
+# On SUCCESS, and why it is not simply cuRobo's own success flag: cuRobo requires its optimiser to
+# have CONVERGED, which is stricter than "the answer is inside tolerance" -- measured on this robot,
+# a solution 0.67 mm and 0.0016 rad from the goal is reported as a failure. So the errors are
+# returned per query and `solved` is computed here against the tolerances below. A caller that wants
+# cuRobo's own opinion can tighten the tolerances instead.
+string planning_group
+# Which link the poses describe. Empty uses the service's configured tool frame. The offset from
+# this link to the frame the solver actually solves for is composed away before solving, exactly as
+# the CPU Behaviors do -- get it wrong and every answer is off by the tool length.
+string target_link
+geometry_msgs/PoseStamped[] poses
+# Optional starting point. Empty uses the robot's current state.
+sensor_msgs/JointState seed_state
+# 0 uses the service's configured defaults.
+float64 position_tolerance       # metres
+float64 orientation_tolerance    # radians
+# Reject solutions that collide with the planning scene or the robot itself.
+bool collision_free
+---
+bool success                     # the batch ran; per-query outcomes are in `solved`
+string message
+# One entry per requested pose, in the same order. An unsolved entry still carries the closest
+# solution found, so a caller can see how near it got rather than only that it failed.
+sensor_msgs/JointState[] solutions
+bool[] solved
+float64[] position_error         # metres
+float64[] orientation_error      # radians
+float64 solve_time               # seconds, for the whole batch

@@ -1,0 +1,11 @@
+<library path="moveit2_extended_gpu_plugin">
+  <class name="moveit2_extended::gpu::GpuBehaviorsLoader"
+         type="moveit2_extended::gpu::GpuBehaviorsLoader"
+         base_class_type="moveit2_extended::BehaviorLoaderBase">
+    <description>
+      Behaviors that push work to a GPU through cuRobo: batch inverse kinematics, and motion
+      planning that answers with a plain RobotTrajectory so the carrier Behaviors judge it exactly
+      as they judge an OMPL plan.
+    </description>
+  </class>
+</library>

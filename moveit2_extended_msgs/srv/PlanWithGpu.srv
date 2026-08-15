@@ -1,0 +1,31 @@
+# Plan a trajectory on the GPU.
+#
+# Deliberately shaped so the answer is a plain moveit_msgs/RobotTrajectory: the point is that a GPU
+# plan is a drop-in for an OMPL one, so it can be validated by the same carrier Behaviors and run by
+# the same controller. Anything that made the GPU path a separate pipeline would defeat that.
+uint8 JOINT_GOAL=0
+uint8 POSE_GOAL=1
+
+string planning_group
+uint8 goal_type
+
+# JOINT_GOAL
+sensor_msgs/JointState joint_goal
+# POSE_GOAL
+geometry_msgs/PoseStamped pose_goal
+# Which link pose_goal describes. Empty uses the service's configured tool frame.
+string target_link
+
+# Empty starts from the robot's current state. Set it to chain plans together without moving.
+moveit_msgs/RobotState start_state
+
+float64 max_velocity_scaling      # 0 uses the configured default
+float64 max_acceleration_scaling  # 0 uses the configured default
+float64 timeout                   # seconds; 0 uses the configured default
+---
+bool success
+string message
+moveit_msgs/RobotTrajectory trajectory
+# The state the arm ends in, for chaining into the next plan's start_state.
+moveit_msgs/RobotState end_state
+float64 planning_time             # seconds

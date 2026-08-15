@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>moveit2_extended_gpu</name>
+  <version>0.1.0</version>
+  <description>
+    GPU work, through cuRobo.
+
+    Two things earn their place on a GPU here. Batch inverse kinematics, because choosing where to
+    cut a grape cluster means proposing dozens of candidate poses and asking which are reachable --
+    that is the query shape a GPU is good at, where one IK query is not. And motion planning, which
+    answers with a plain moveit_msgs/RobotTrajectory so a GPU plan is a drop-in for an OMPL one and
+    is judged by the same cable-carrier Behaviors.
+
+    cuRobo is Python-only, so it sits behind two services and the Behaviors are thin clients. That
+    also makes the GPU optional at run time: a site without one does not start curobo_service, the
+    Behaviors fail with a clear message, and the Objective's Fallback drops to the CPU path. The
+    Behaviors themselves need neither cuRobo nor a GPU to build or to register.
+  </description>
+  <maintainer email="cheesiang_leow@alps-lab.org">Leow Chee Siang</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>moveit2_extended_core</depend>
+  <depend>moveit2_extended_behaviors</depend>
+  <depend>moveit2_extended_msgs</depend>
+  <depend>behaviortree_cpp_v3</depend>
+  <depend>rclcpp</depend>
+  <depend>pluginlib</depend>
+  <depend>moveit_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+
+  <!-- curobo_service.py only. cuRobo, torch and warp are pip installs with no rosdep keys, so they
+       are not listed: the node reports what is missing rather than failing to build. -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>trajectory_msgs</exec_depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

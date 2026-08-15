@@ -9,6 +9,7 @@ find_package(rcl_interfaces REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(moveit_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/BehaviorStatus.msg"
@@ -47,9 +48,13 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/ListTools.srv"
   "srv/GetActiveTool.srv"
 
+  "srv/SolveIKBatch.srv"
+  "srv/PlanWithGpu.srv"
+
   "action/ExecuteObjective.action"
 
   DEPENDENCIES builtin_interfaces action_msgs rcl_interfaces std_msgs sensor_msgs geometry_msgs
+               moveit_msgs
 )
 
 if(BUILD_TESTING)
