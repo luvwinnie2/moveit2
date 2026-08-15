@@ -84,6 +84,66 @@ bool parseCarrierYaml(const std::string& yaml_text, std::vector<CarrierParams>& 
       assignIf(node, "bend_utilisation_warn", c.bend_utilisation_warn);
       assignIf(node, "relaxation", c.relaxation);
       assignIf(node, "energy_relaxation", c.energy_relaxation);
+      assignIf(node, "twist_limit_per_link_deg", c.twist_limit_per_link);
+      if (node["twist_limit_per_link_deg"])
+      {
+        c.twist_limit_per_link *= M_PI / 180.0;  // authored in degrees, which is how it is quoted
+      }
+      assignIf(node, "retraction_bias", c.retraction_bias);
+
+      if (node["kind"])
+      {
+        const std::string kind = node["kind"].as<std::string>();
+        if (kind == "articulated_carrier")
+        {
+          c.kind = CarrierKind::ArticulatedCarrier;
+        }
+        else if (kind == "planar_chain")
+        {
+          c.kind = CarrierKind::PlanarChain;
+        }
+        else if (kind == "bare_cable")
+        {
+          c.kind = CarrierKind::BareCable;
+        }
+        else if (kind == "corrugated_hose")
+        {
+          c.kind = CarrierKind::CorrugatedHose;
+        }
+        else
+        {
+          if (error)
+          {
+            *error = "carrier '" + c.name + "': unknown kind '" + kind + "'";
+          }
+          return false;
+        }
+      }
+      if (node["mount_style"])
+      {
+        const std::string style = node["mount_style"].as<std::string>();
+        c.mount_style = style == "pivot" ? MountStyle::Pivot
+                        : style == "retraction" ? MountStyle::Retraction
+                                                : MountStyle::Fixed;
+      }
+      if (node["retraction_dir"] && node["retraction_dir"].size() == 3)
+      {
+        c.retraction_dir = Eigen::Vector3d(node["retraction_dir"][0].as<double>(),
+                                           node["retraction_dir"][1].as<double>(),
+                                           node["retraction_dir"][2].as<double>());
+      }
+      if (node["inner_cables"] && node["inner_cables"].IsSequence())
+      {
+        for (const auto& cn : node["inner_cables"])
+        {
+          InnerCable cable;
+          assignIf(cn, "name", cable.name);
+          assignIf(cn, "outer_diameter", cable.outer_diameter);
+          assignIf(cn, "min_bend_factor", cable.min_bend_factor);
+          assignIf(cn, "count", cable.count);
+          c.inner_cables.push_back(std::move(cable));
+        }
+      }
       assignIf(node, "simplify_deviation", c.simplify_deviation);
       assignIf(node, "base_link", c.base_link);
       assignIf(node, "tip_link", c.tip_link);

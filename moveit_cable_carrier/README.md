@@ -54,8 +54,9 @@ that reach the bracket rather than one pinned against the bend limit.
 Measured on a FANUC CRX-5iA, carrier spanning J4/J5/J6, 9³ = 729 wrist configurations:
 
 ```
-carrier feasible : 98.6 %          shape solve : p50 241 us
-full check       : p50 397 us      achieved min bend radius == R_min exactly
+carrier feasible : 98.9 %          shape solve : p50  57 us, mean 115 us
+in collision     :  1.1 %          full check  : p50 411 us, mean 526 us
+achieved minimum bend radius == R_min exactly, i.e. the constraint is active
 ```
 
 Build with `-DCMAKE_BUILD_TYPE=Release`; an unoptimised build is ~600x slower.
@@ -75,6 +76,73 @@ Build with `-DCMAKE_BUILD_TYPE=Release`; an unoptimised build is ~600x slower.
 ros2 launch moveit_cable_carrier carrier_demo.launch.py   # move the wrist, watch it deform
 ```
 
+## Supported run types
+
+`config/carrier_types.yaml` is a type library. Every entry declares its `provenance`
+(`measured` / `rule` / `template`); do not ship a `template` entry without replacing it with the
+vendor's numbers.
+
+| kind | what it is | binding limit |
+|---|---|---|
+| `articulated_carrier` | 3D dresspack (igus triflex R and equivalents), the standard for axes 3-6 | defined bend radius plus a torsion stop of about ±10° per link |
+| `planar_chain` | planar link/linkless chain (Kunimori Silveyer KSL/KSH), **for linear axes** | one bend axis, back-stopped to one side |
+| `bare_cable` | bare cable or hose | a multiple of its own OD: 10x for continuous flex, 7.5x for qualified high-flex |
+| `corrugated_hose` | corrugated conduit | no defined bend radius and no torsion stop |
+
+### The binding limit is usually the cable, not the carrier
+
+Declaring `inner_cables` checks the carrier's own stop *and* what its contents will tolerate.
+Measured over one pruning cycle on the CRX-5iA:
+
+```
+carrier (R_min 40 mm) utilisation : 0.32-0.74   comfortable
+10 mm robot cable, needs 10x OD   : 5.4x-9.3x   violated on 15 of 24 waypoints
+```
+
+The carrier is relaxed at a 62 mm radius; the 10 mm cable inside wants 100 mm. That is the finding
+the tool exists to produce.
+
+## Reference-solver cross-check
+
+| reference | status |
+|---|---|
+| **MuJoCo** `elasticity.cable` | works; the moving bracket is held by an equality `connect` constraint |
+| **NVIDIA Newton** rod + VBD | implemented, but **cannot clamp both ends** — see below |
+
+Against MuJoCo over 62 configurations, gravity disabled:
+
+```
+mean deviation   0.44 mm
+worst deviation 21.7 mm   (p99 equals the worst, so one outlier sets it)
+```
+
+With gravity on the disagreement grows to 63.6 mm mean / 193 mm worst, but that is not model
+error: this solver treats gravity as a heuristic sag term, so leaving it on compares two different
+sag models rather than the elastic shape. `safety_margin: 0.024` comes from the measured 21.7 mm
+plus 2 mm for bracket play.
+
+### Why Newton cannot hold both brackets
+
+A dresspack is clamped at two brackets. Newton's rigid path is articulation-based and an
+articulation is a tree, so the second clamp is a loop closure the API does not expose. Verified
+three ways on Newton 1.0.0 with `SolverVBD`, all reaching the same wall:
+
+* `add_joint_fixed(-1, body)` on a body created by `add_rod` is silently ignored — with or without
+  `parent_xform`, the rod settles to *exactly* the same place as with no anchor at all, because the
+  body already has a parent joint.
+* `add_rod(wrap_in_articulation=False)` then demands `add_articulation(joints)`, putting it back in
+  a tree.
+* Making the far end `add_body(is_kinematic=True)` is rejected outright: *"Only root bodies (whose
+  joint parent is the world) can be kinematic."*
+
+The generator therefore verifies after settling that the rod still starts at the bracket it was
+pinned to, and drops any case that does not — a shape that merely fell under gravity looks
+converged and would silently poison the comparison. That gate caught 64 of 64 cases.
+
+Newton's solvers also need Python >= 3.11. They are lazily imported, so `import newton` and
+`import newton.solvers` both succeed on 3.10 and only touching a solver class raises; Isaac Sim's
+3.12 interpreter works.
+
 ## Known limitations
 
 1. **The solver does not see obstacles.** It returns the free-space minimum-energy shape, which can
@@ -82,14 +150,13 @@ ros2 launch moveit_cable_carrier carrier_demo.launch.py   # move the wrist, watc
    links, but the shape while resting on a link is not reproduced.
 2. **No hysteresis.** A real carrier retains part of its previous shape. Newton's Dahl cable model
    covers this; it is not modelled here.
-3. **`safety_margin` is not yet calibrated.** The MuJoCo cross-check disagrees by up to 193 mm, but
-   that comparison is not valid as configured: MuJoCo's cable has no minimum-bend-radius constraint
-   and its stiffness was not fitted to the real part, so it measures the difference between two
-   different physical models rather than the surrogate's error. Calibrating the reference is
-   required before the number means anything.
-4. **Bending stress** is reported from Euler-Bernoulli beam theory, which suits a continuous cable
-   but not an articulated ball-and-socket carrier shell. Treat `bend_utilisation` as the meaningful
-   quantity for the carrier itself.
+3. **Gravity is crude.** `gravity_sag` nudges the nodes each iteration rather than solving static
+   equilibrium, which is what opens the 63.6 mm mean gap once gravity is enabled. Long unsupported
+   runs need it fitted to measurement.
+4. **No stress in pascals, deliberately.** Euler-Bernoulli beam stress on the shell is meaningless
+   for a ball-and-socket chain that bends at its joints — it produced figures ten times the yield
+   of any polymer such a carrier is made from. The reported quantities are bend utilisation and the
+   industry's radius-to-OD ratio instead.
 
 ## Compatibility
 

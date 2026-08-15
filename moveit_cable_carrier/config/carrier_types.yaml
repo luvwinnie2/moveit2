@@ -1,0 +1,165 @@
+# ケーブル / ケーブルキャリア 型式ライブラリ
+#
+# 使い方: ここから型を 1 つ選び、ロボットへの取り付け（base_link / tip_link / mount 姿勢 /
+# length）を足したものが 1 本の配線になる。取り付け例は crx5ia_carrier.yaml を参照。
+#
+# ─── 数値の出典について（重要）─────────────────────────────────────────
+# provenance フィールドで各エントリの確度を明示している。
+#   measured  : 製品カタログ等で確認できた実数値
+#   rule      : 業界で公開されている設計規則から導いた値（例: 連続屈曲ケーブルは外径の 10 倍）
+#   template  : 形だけ用意した雛形。**必ずベンダ仕様書の値に差し替えること**
+# 「だいたい合っている数値」で計画すると、通るはずの経路を塞いだり、逆に
+# 実機で断線する経路を通してしまう。provenance: template のまま本番に使わないこと。
+# ───────────────────────────────────────────────────────────────
+
+# =============================================================================
+# 1. 3D ロボットドレスパック（ボール&ソケット式）
+#    6軸アームの軸3〜軸6 に使う標準品。igus triflex R 系が代表。
+#    全方向に曲がり、規定の最小曲げ半径と、リンクあたりのねじれストッパを持つ。
+# =============================================================================
+types:
+  - name: dresspack_3d_70
+    kind: articulated_carrier
+    provenance: measured
+    note: >
+      TRC.70 相当。外形 81 x 81 mm、最小曲げ半径 110 mm は製品情報で確認済み。
+      ねじれはリンクあたり約 ±10 度（triflex R 系共通の公称値）。
+    outer_height: 0.081
+    outer_width: 0.081
+    bend_radius: 0.110
+    twist_limit_per_link_deg: 10.0
+    bend_mode: spatial
+    unilateral: false
+
+  - name: dresspack_3d_small
+    kind: articulated_carrier
+    provenance: template
+    note: >
+      手首まわりの小径ドレスパックの雛形。外径 26 mm / R=40 mm は CRX クラスの
+      手首に収まる想定値であって、特定製品の実数値ではない。
+      発注前に必ず実際の型番の仕様書で置き換えること。
+    outer_height: 0.026
+    outer_width: 0.026
+    bend_radius: 0.040
+    twist_limit_per_link_deg: 10.0
+    bend_mode: spatial
+    unilateral: false
+
+# =============================================================================
+# 2. 平面ケーブルチェーン（2次元）
+#    直線軸用。片側にしか曲がらず（バックストップ）、ねじれを許さない。
+#    6軸アームの手首に使うと大半の姿勢が成立しない（実測: 実行可能率 0.3%）。
+# =============================================================================
+  - name: silveyer_ksl10
+    kind: planar_chain
+    provenance: measured
+    note: >
+      国盛化学 Silveyer KSL-10。内寸 10 x 20 mm、曲げ半径オプション 31 / 40 / 68 mm、
+      最高速度 3 m/s。ここでは中間の R=40 mm を採用。樹脂肉厚を足して外形とした。
+    outer_height: 0.016
+    outer_width: 0.026
+    bend_radius: 0.040
+    twist_limit_per_link_deg: 0.5
+    bend_mode: planar
+    unilateral: true
+    bend_axis: [0.0, 0.0, 1.0]
+
+  - name: silveyer_ksh40l
+    kind: planar_chain
+    provenance: measured
+    note: 国盛化学 Silveyer KSH-40L。内寸 40 x 70 mm、曲げ半径 110 mm。
+    outer_height: 0.048
+    outer_width: 0.080
+    bend_radius: 0.110
+    twist_limit_per_link_deg: 0.5
+    bend_mode: planar
+    unilateral: true
+    bend_axis: [0.0, 0.0, 1.0]
+
+# =============================================================================
+# 3. 裸ケーブル / ホース（キャリアなし）
+#    機械的ストッパが無いので、限界はケーブル自身の最小曲げ半径だけ。
+#    連続屈曲用は外径の 10 倍が標準。高屈曲品でも 7.5 倍が下限で、
+#    それを割ると寿命が 1000 万サイクル級から一気に落ちる。
+# =============================================================================
+  - name: bare_robot_cable_10mm
+    kind: bare_cable
+    provenance: rule
+    note: >
+      外径 10 mm の連続屈曲ロボットケーブル。R_min = 10 x OD = 100 mm は
+      業界標準の規則による。実際の値はケーブルメーカーの試験データで確認すること
+      （走行速度と加速度で変わる）。
+    outer_height: 0.010
+    outer_width: 0.010
+    bend_radius: 0.100
+    twist_limit_per_link_deg: 30.0
+    bend_mode: spatial
+    unilateral: false
+    inner_cables:
+      - name: robot_cable_10mm
+        outer_diameter: 0.010
+        min_bend_factor: 10.0
+
+  - name: pneumatic_hose_8mm
+    kind: bare_cable
+    provenance: rule
+    note: >
+      カッター駆動用エア配管 φ8。ポリウレタンチューブは樹脂ケーブルより
+      曲げに強いが、ここでは保守側に 8 倍で見ている。
+    outer_height: 0.008
+    outer_width: 0.008
+    bend_radius: 0.064
+    twist_limit_per_link_deg: 45.0
+    bend_mode: spatial
+    unilateral: false
+    inner_cables:
+      - name: air_hose_8mm
+        outer_diameter: 0.008
+        min_bend_factor: 8.0
+
+# =============================================================================
+# 4. コルゲートチューブ（可とう電線管）
+#    安価だが曲げ半径が規定されず、ねじれストッパも無い。
+#    ロボットに triflex 系が好まれるのはこの点が理由。
+# =============================================================================
+  - name: corrugated_hose_29mm
+    kind: corrugated_hose
+    provenance: template
+    note: >
+      呼び径 29 のコルゲートチューブ相当の雛形。コルゲートは曲げ半径が
+      「規定されない」のが本質で、ここの値は保守的な仮置き。
+      ねじれ自由なので、中のケーブルがコルクスクリュー状に痛みやすい。
+    outer_height: 0.029
+    outer_width: 0.029
+    bend_radius: 0.090
+    twist_limit_per_link_deg: -1.0    # 負 = ねじれ制限なし
+    bend_mode: spatial
+    unilateral: false
+
+# =============================================================================
+# 5. FL23 カッター用の実配線（中身入りドレスパック）
+#    これが本ワークスペースで実際に使う構成。
+# =============================================================================
+  - name: fl23_cutter_dresspack
+    kind: articulated_carrier
+    provenance: template
+    note: >
+      dresspack_3d_small に、カッターへ行く実際の配線を入れたもの。
+      キャリア自体は R=40 mm まで曲がるが、中の φ10 ロボットケーブルが
+      100 mm を要求するので、**効いている制約はケーブル側**になる。
+      effectiveBendRadius() がこれを自動で拾う。
+    outer_height: 0.026
+    outer_width: 0.026
+    bend_radius: 0.040
+    twist_limit_per_link_deg: 10.0
+    bend_mode: spatial
+    unilateral: false
+    inner_cables:
+      - name: cutter_power_signal
+        outer_diameter: 0.010
+        min_bend_factor: 10.0
+        count: 1
+      - name: cutter_air
+        outer_diameter: 0.008
+        min_bend_factor: 8.0
+        count: 2

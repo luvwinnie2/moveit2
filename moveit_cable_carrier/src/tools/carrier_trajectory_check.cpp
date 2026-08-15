@@ -165,9 +165,9 @@ int main(int argc, char** argv)
               params.bend_radius, params.youngs_modulus, params.shear_modulus);
   std::printf("mount %s -> %s   waypoints %zu   joints %zu\n\n", params.base_link.c_str(), params.tip_link.c_str(),
               waypoints.size(), joint_names.size());
-  std::printf("%5s %5s %10s %10s %11s %11s %6s\n", "step", "ok", "R_min[mm]", "util", "bend[MPa]", "twist[MPa]",
+  std::printf("%5s %5s %10s %8s %8s %12s %6s\n", "step", "ok", "R[mm]", "bend/lim", "twist/lim", "cableR/OD",
               "coll");
-  std::printf("%s\n", std::string(62, '-').c_str());
+  std::printf("%s\n", std::string(66, '-').c_str());
 
   // ---- per-segment flex history, for the fatigue view ----
   const size_t joints = static_cast<size_t>(std::max(0, params.num_segments - 1));
@@ -175,8 +175,10 @@ int main(int argc, char** argv)
   std::vector<long> seg_reversals(joints, 0);
   std::vector<int> seg_dir(joints, 0);
 
-  long infeasible = 0, colliding = 0, over_worked = 0;
-  double worst_util = 0.0, worst_bend_stress = 0.0, worst_twist_stress = 0.0;
+  long infeasible = 0, colliding = 0, over_worked = 0, cable_violations = 0;
+  double worst_util = 0.0, worst_twist_util = 0.0, worst_strain = 0.0;
+  double worst_cable_ratio = 1e30, required_cable_ratio = 0.0;
+  std::string worst_cable_name;
   double tightest_radius = 1e30;
   std::ostringstream rows;
 
@@ -195,8 +197,6 @@ int main(int argc, char** argv)
     scene->checkCollision(req, res, state);
 
     const double radius_mm = 1000.0 * shape.min_bend_radius();
-    const double bend_mpa = shape.max_bending_stress / 1e6;
-    const double twist_mpa = shape.max_torsional_stress / 1e6;
 
     if (!shape.feasible)
     {
@@ -213,8 +213,21 @@ int main(int argc, char** argv)
     if (shape.feasible)
     {
       worst_util = std::max(worst_util, shape.bend_utilisation);
-      worst_bend_stress = std::max(worst_bend_stress, bend_mpa);
-      worst_twist_stress = std::max(worst_twist_stress, twist_mpa);
+      worst_twist_util = std::max(worst_twist_util, shape.twist_utilisation);
+      worst_strain = std::max(worst_strain, shape.max_cable_strain);
+      if (shape.required_cable_bend_ratio > 0.0)
+      {
+        if (shape.min_cable_bend_ratio < worst_cable_ratio)
+        {
+          worst_cable_ratio = shape.min_cable_bend_ratio;
+          worst_cable_name = shape.worst_cable;
+          required_cable_ratio = shape.required_cable_bend_ratio;
+        }
+        if (!shape.cablesWithinLimit())
+        {
+          ++cable_violations;
+        }
+      }
       tightest_radius = std::min(tightest_radius, shape.min_bend_radius());
 
       for (size_t k = 0; k < joints && k < shape.curvature.size(); ++k)
@@ -241,9 +254,19 @@ int main(int argc, char** argv)
       }
     }
 
-    std::printf("%5zu %5s %10.1f %10.2f %11.1f %11.1f %6s\n", step, shape.feasible ? "yes" : "NO",
-                shape.feasible ? radius_mm : 0.0, shape.bend_utilisation, bend_mpa, twist_mpa,
-                res.collision ? "YES" : "-");
+    char cable_cell[24];
+    if (shape.required_cable_bend_ratio > 0.0 && shape.feasible)
+    {
+      std::snprintf(cable_cell, sizeof(cable_cell), "%.1f/%.0f%s", shape.min_cable_bend_ratio,
+                    shape.required_cable_bend_ratio, shape.cablesWithinLimit() ? "" : " !");
+    }
+    else
+    {
+      std::snprintf(cable_cell, sizeof(cable_cell), "-");
+    }
+    std::printf("%5zu %5s %10.1f %8.2f %8.2f %12s %6s\n", step, shape.feasible ? "yes" : "NO",
+                shape.feasible ? radius_mm : 0.0, shape.bend_utilisation, shape.twist_utilisation,
+                cable_cell, res.collision ? "YES" : "-");
 
     if (!report_json.empty())
     {
@@ -251,8 +274,9 @@ int main(int argc, char** argv)
            << (shape.feasible ? "true" : "false") << ", \"collision\": " << (res.collision ? "true" : "false")
            << ", \"min_bend_radius\": " << shape.min_bend_radius()
            << ", \"bend_utilisation\": " << shape.bend_utilisation
-           << ", \"bending_stress_pa\": " << shape.max_bending_stress
-           << ", \"torsional_stress_pa\": " << shape.max_torsional_stress << "}";
+           << ", \"twist_utilisation\": " << shape.twist_utilisation
+           << ", \"cable_bend_ratio\": " << shape.min_cable_bend_ratio
+           << ", \"cable_strain\": " << shape.max_cable_strain << "}";
     }
   }
 
@@ -265,8 +289,17 @@ int main(int argc, char** argv)
     std::printf("tightest radius    : %.1f mm  (hardware limit %.1f mm, utilisation %.2f)\n",
                 1000.0 * tightest_radius, 1000.0 * params.bend_radius, worst_util);
   }
-  std::printf("peak bending stress: %.1f MPa\n", worst_bend_stress);
-  std::printf("peak torsion stress: %.1f MPa\n", worst_twist_stress);
+  std::printf("peak twist per link: %.2f of the torsion stop\n", worst_twist_util);
+  if (required_cable_ratio > 0.0)
+  {
+    std::printf("worst inner cable  : '%s' at %.1fx OD (needs %.0fx), strain %.2f%%  -- %ld waypoints over limit\n",
+                worst_cable_name.c_str(), worst_cable_ratio, required_cable_ratio, 100.0 * worst_strain,
+                cable_violations);
+  }
+  else
+  {
+    std::printf("inner cables       : none declared, so no cable bend-radius check was made\n");
+  }
 
   // Which segment is worked hardest -- that is where the carrier will fail first.
   size_t hot = 0;
@@ -291,7 +324,7 @@ int main(int argc, char** argv)
     std::printf("  -> this is where the carrier fatigues first; add slack or move a bracket to relieve it.\n");
   }
 
-  if (infeasible || colliding)
+  if (infeasible || colliding || cable_violations)
   {
     std::printf("\nVERDICT: this trajectory is NOT safe for the carrier as mounted.\n");
   }
@@ -315,5 +348,5 @@ int main(int argc, char** argv)
       std::printf("\nwrote %s\n", report_json.c_str());
     }
   }
-  return (infeasible || colliding) ? 2 : 0;
+  return (infeasible || colliding || cable_violations) ? 2 : 0;
 }

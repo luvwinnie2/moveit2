@@ -94,15 +94,15 @@ collision_detector: CABLE_CARRIER      # move_group の設定でこれを選ぶ
 ## 実測値（CRX-5iA、J4/J5/J6 を 9³ = 729 通り走査）
 
 ```
-carrier 'crx5ia_wrist_triflex3d': L=0.520 m  R_min=0.040 m  N=24  margin=0.006 m
+carrier 'crx5ia_wrist_triflex3d': L=0.520 m  R_min=0.040 m  N=24  margin=0.024 m
 mount: J3_link -> J6_link          spanned joints (3): J4 J5 J6
 
 bracket chord   : min 0.319 m  p50 0.399  max 0.478   (carrier length 0.520 m)
-carrier feasible: 719 (98.6%)
+carrier feasible: 721 (98.9%)
 in collision    :   8 ( 1.1%)
 
-shape solve  mean  113.7 us   p50  44.0   p95  593.3   max  631.7
-full check   mean  363.5 us   p50 279.2   p95  971.6   max 1370.2
+shape solve  mean  115.2 us   p50  57.2   p95  469.6   max  743.0
+full check   mean  525.8 us   p50 411.0   p95 1116.8   max 1900.3
 
 achieved bend radius: min 0.0400 m  (hardware limit 0.0400 m)
 ```
@@ -116,6 +116,71 @@ J4/J5/J6 が回る手首では大半の姿勢が成立しない。
 設定を `bend_mode: spatial` に直したことで 0.3% → 98.6% になった。
 **これはモデル選択が結果を決めた例で、数値のチューニングでは直らなかった。**
 
+## 対応している配線の種類
+
+`config/carrier_types.yaml` に型式ライブラリを置いている。各項目には出典の確度
+（`measured` / `rule` / `template`）を明記してあり、`template` のまま本番に使わないこと。
+
+| kind | 何を表すか | 効く制約 |
+|---|---|---|
+| `articulated_carrier` | 3D ドレスパック（igus triflex R 系）。6軸アームの軸3〜6 の標準 | 規定曲げ半径 + リンクあたり ±10° のねじれストッパ |
+| `planar_chain` | 平面ケーブルチェーン（Silveyer KSL/KSH 等）。**直線軸用** | 1 軸曲げ + バックストップ（片側のみ） |
+| `bare_cable` | 裸ケーブル・ホース | 外径の 10 倍則（高屈曲品で 7.5 倍） |
+| `corrugated_hose` | コルゲートチューブ | 曲げ半径が規定されず、ねじれ自由 |
+
+### 効く制約はキャリアではなくケーブル側のことが多い
+
+`inner_cables` に中を通す配線を書くと、**キャリアの曲げ半径とケーブルの曲げ半径の
+両方**を評価する。実測例（CRX-5iA、剪定 1 サイクル）:
+
+```
+キャリア (R_min 40mm) の利用率 : 0.32〜0.74   ← 余裕がある
+φ10 ロボットケーブル (10x OD)  : 5.4x〜9.3x   ← 24 点中 15 点で違反
+```
+
+キャリアは 62 mm の半径で楽をしているが、φ10 ケーブルは 100 mm を要求する。
+**設計変更が必要なのはケーブル側**、という判断がこれで出せる。
+
+## 参照ソルバとの突き合わせ（実施済み）
+
+| 参照 | 状態 |
+|---|---|
+| **MuJoCo** `elasticity.cable` | ✅ 動作。可動端は equality `connect` 拘束で保持 |
+| **NVIDIA Newton** rod + VBD | ⚠️ 実装済みだが**両端固定ができない**（下記） |
+
+MuJoCo との比較（62 姿勢、重力なし）:
+
+```
+平均偏差   0.44 mm
+最大偏差  21.7 mm   (p99 も同値 = 外れ値 1 件)
+```
+
+重力ありだと平均 63.6 mm / 最大 193 mm まで開くが、これはモデル誤差ではなく
+**重力のモデル化方法の差**。本ソルバの `gravity_sag` はヒューリスティックなので、
+弾性形状そのものの精度を見るには重力を切って比べるのが正しい。
+`safety_margin: 0.024` はこの実測（21.7 mm + 公差 2 mm）に基づく。
+
+### Newton が両端を固定できない件
+
+ドレスパックは 2 つのブラケットで両端を固定されるが、Newton の剛体経路は
+アーティキュレーション（＝木構造）ベースで、2 つ目の固定はループ閉合になる。
+Newton 1.0.0 + SolverVBD で 3 通り検証し、すべて同じ壁に当たった:
+
+- `add_rod` が作ったボディへの `add_joint_fixed(-1, body)` は**黙って無視される**
+  （`parent_xform` の有無にかかわらず、固定なしと**完全に同一の結果**になる）
+- `wrap_in_articulation=False` は `add_articulation(joints)` を要求し、結局木に戻る
+- 末端を `add_body(is_kinematic=True)` にすると明示的に拒否される
+  （*"Only root bodies (whose joint parent is the world) can be kinematic."*）
+
+そのため生成スクリプトは、緩和後に**ロッドが元のブラケット位置から動いていないかを
+検査**し、動いていたらそのケースを棄却する。重力で落ちただけの形状を参照値として
+出さないためで、実際にこのゲートが 64/64 件を捕捉した。
+Newton にループ閉合が入るまでは MuJoCo を参照に使うこと。
+
+なお Newton のソルバは **Python 3.11 以上が必要**。遅延インポートなので
+`import newton` も `import newton.solvers` も 3.10 で成功してしまい、
+ソルバクラスに触れた瞬間に初めて失敗する。Isaac Sim の 3.12 で動く。
+
 ## 既知の限界（重要）
 
 1. **ソルバは障害物を見ない。** 出るのは最小エネルギー形状で、アームにめり込むことがある。
@@ -124,9 +189,12 @@ J4/J5/J6 が回る手首では大半の姿勢が成立しない。
 2. **ヒステリシスは未実装。** 実物は前の形状を引きずる（Newton の Dahl モデルが該当）。
    現状は履歴によらず一意の形状を返すので、その差は `safety_margin` に含める必要がある。
 3. **端点残差**が存在する（上表のとおり）。`safety_margin` で吸収する前提。
-4. **参照ソルバとの突き合わせは未実施。** Newton / MuJoCo がこの環境に未導入のため。
-   `scripts/generate_reference_shapes.py --list-backends` で確認できる。
-   現在の `safety_margin: 0.006` は**実測に基づく値ではなく暫定値**。
+4. **重力モデルが粗い。** `gravity_sag` は反復ごとに節点を少し引っ張るだけの
+   ヒューリスティックで、静力学的な釣り合いを解いていない。重力を入れた比較で
+   平均 63.6 mm も開くのはこれが原因。垂れが効く長い配線では実測合わせが必要。
+5. **応力は「ケーブルの曲げひずみ」として報告する。** 外殻の梁曲げ応力（σ=E·y·κ）は
+   関節で曲がるボール&ソケット構造には無意味で、実際ナイロンの降伏の 10 倍という
+   数字が出ていた。現在は業界標準の「曲げ半径 ÷ ケーブル外径」比で評価している。
 
 ## 使い方
 

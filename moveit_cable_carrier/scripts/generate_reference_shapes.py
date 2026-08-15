@@ -10,12 +10,36 @@ script produces reference shapes with a real deformable solver, so that
 
 Backends
 --------
-newton   NVIDIA Newton (https://github.com/newton-physics/newton).  Targets the 1.4-era API:
-         ``newton.ModelBuilder.add_joint_cable`` for the Cosserat-style cable joints and
-         ``newton.solvers.SolverVBD`` to settle them.  Newton additionally offers a Dahl
-         plasticity model for cable bending hysteresis (``model.vbd.dahl_eps_max`` /
-         ``model.vbd.dahl_tau``), which is the mechanism that makes a real drag chain keep some
-         of its previous shape -- see ``--dahl``.
+newton   NVIDIA Newton (https://github.com/newton-physics/newton), via ``ModelBuilder.add_rod``
+         and ``newton.solvers.SolverVBD``.  Newton also carries a Dahl plasticity model for
+         cable bending hysteresis -- the mechanism that makes a real dresspack keep part of its
+         previous shape -- which ``--dahl`` switches on.
+
+         .. warning::
+            **Both ends cannot be clamped in Newton 1.0/1.5.**  A dresspack is clamped at two
+            brackets, but Newton's rigid path is articulation-based and an articulation is a
+            tree, so the second clamp is a loop closure that the API does not expose.  Verified
+            three ways, all on Newton 1.0.0 with SolverVBD:
+
+            * ``add_joint_fixed(-1, body)`` on a body created by ``add_rod`` is silently ignored
+              -- with and without ``parent_xform``, the rod settles to exactly the same place as
+              with no anchor at all, because the body already has a parent joint.
+            * ``add_rod(wrap_in_articulation=False)`` then requires ``add_articulation(joints)``,
+              which puts it back in a tree.
+            * ``add_body(is_kinematic=True)`` for the far end is rejected outright:
+              *"Only root bodies (whose joint parent is the world) can be kinematic."*
+
+            The generator therefore checks after settling that the rod still starts at its
+            bracket, and drops any case where it does not, rather than emitting a shape that
+            merely fell under gravity.  Use the ``mujoco`` backend, whose equality ``connect``
+            constraint does hold the far end, until Newton exposes a loop closure.
+
+         Newton's solvers additionally need Python >= 3.11: they are lazily imported, so
+         ``import newton`` and ``import newton.solvers`` both succeed on 3.10 and only touching
+         a solver class raises.  Isaac Sim's interpreter (3.12) works.
+mujoco   MuJoCo's ``elasticity.cable`` composite, with the moving bracket held by an equality
+         ``connect`` constraint.  CPU only, and currently the only backend that can hold both
+         ends.
 mujoco   MuJoCo's ``elasticity.cable`` composite.  CPU-only and much easier to install; useful as
          an independent cross-check of the Newton numbers.
 
@@ -81,68 +105,99 @@ def available_backends() -> dict[str, bool]:
 # --------------------------------------------------------------------------------------------
 # Newton backend
 # --------------------------------------------------------------------------------------------
-def solve_newton(carrier: dict[str, Any], cases: list[dict[str, Any]], *, dahl: bool,
-                 substeps: int, settle_steps: int) -> list[dict[str, Any]]:
-    import newton  # noqa: F401  (import errors are reported by the caller)
+def solve_newton(carrier: dict[str, Any], cases: list[dict[str, Any]], seeds: list[dict[str, Any]] | None,
+                 *, dahl: bool, substeps: int, settle_steps: int) -> list[dict[str, Any]]:
+    """Relax NVIDIA Newton's Cosserat rod between the two brackets.
+
+    Uses ``ModelBuilder.add_rod``, which builds the rod straight from a centreline and gives direct
+    control of stretch / bend / twist stiffness, and settles it with ``SolverVBD``. Newton also
+    carries a Dahl plasticity model for cable bending hysteresis -- the mechanism that makes a real
+    dresspack keep part of its previous shape -- which ``--dahl`` switches on.
+
+    A seed centreline is required for the same reason as the MuJoCo backend: comparing the fast
+    solver against a reference is only meaningful if both start from the same boundary conditions.
+    """
+    import inspect
+
+    import newton
+    import numpy as np
     import warp as wp
     from newton.solvers import SolverVBD
 
     n_seg = int(carrier["num_segments"])
     seg_len = float(carrier["length"]) / n_seg
-    # Bending stiffness of a rectangular nylon section.  These are starting values: the whole
-    # point of calibrate-against-reality is that they get fitted, see --stiffness overrides.
-    e_modulus = float(carrier.get("youngs_modulus", 2.0e9))       # nylon, Pa
     h = float(carrier["outer_height"])
     w = float(carrier["outer_width"])
-    second_moment = w * h ** 3 / 12.0
+    radius = 0.5 * math.hypot(h, w)
+
+    # Starting stiffness values for a nylon section. They are only a starting point -- fitting them
+    # to measured shapes is exactly what Warp's autodiff is for, and until that is done the
+    # reference is not calibrated to any real part.
+    e_modulus = float(carrier.get("youngs_modulus", 2.0e9))
+    second_moment = math.pi * radius ** 4 / 4.0
     bend_k = float(carrier.get("bend_stiffness", e_modulus * second_moment / seg_len))
-    twist_k = float(carrier.get("twist_stiffness", bend_k * 2.0))
+    twist_k = float(carrier.get("twist_stiffness", bend_k * 0.7))
     stretch_k = float(carrier.get("stretch_stiffness", bend_k * 1.0e4))
 
-    results = []
-    for case in cases:
-        builder = newton.ModelBuilder(gravity=carrier.get("gravity", [0.0, 0.0, -9.81]))
+    results: list[dict[str, Any]] = []
+    for index, case in enumerate(cases):
+        if seeds is None or index >= len(seeds) or not seeds[index].get("nodes"):
+            results.append({"nodes": [], "note": "no seed"})
+            continue
+        if not seeds[index].get("feasible", True):
+            results.append({"nodes": [], "note": "seed infeasible"})
+            continue
+        seed_nodes = seeds[index]["nodes"]
+
+        # Newton 1.0 takes gravity as a scalar along up_axis; 1.5 takes a vector. Passing the
+        # wrong one is not caught at construction -- it blows up later inside finalize().
+        probe = newton.ModelBuilder()
+        gravity_is_vector = hasattr(getattr(probe, "gravity", None), "__len__")
+        gravity_vec = carrier.get("gravity", [0.0, 0.0, -9.81])
+        gravity_arg = gravity_vec if gravity_is_vector else -abs(float(gravity_vec[2]))
+
+        builder = newton.ModelBuilder(gravity=gravity_arg)
         if dahl:
-            # Registering the custom attributes is required *before* the model is built.
+            # Custom attributes have to be registered before the model is built.
             SolverVBD.register_custom_attributes(builder, dahl_defaults_enabled=True)
 
-        base = case["base"]
-        tip = case["tip"]
-        b0 = base["xyz"]
-        t0 = tip["xyz"]
-        d_base = bracket_axis(base)
-        d_tip = bracket_axis(tip)
+        # add_rod's keyword set moved between Newton releases (1.0 has no twist/shear stiffness,
+        # 1.5 does), so pass only what this build actually accepts rather than pinning a version.
+        wanted = {
+            "radius": radius,
+            "stretch_stiffness": stretch_k,
+            "bend_stiffness": bend_k,
+            "twist_stiffness": twist_k,
+            "shear_stiffness": twist_k,
+            "label": "carrier",
+        }
+        accepted = set(inspect.signature(builder.add_rod).parameters)
+        kwargs = {k: v for k, v in wanted.items() if k in accepted}
+        dropped = sorted(set(wanted) - set(kwargs))
 
-        # Straight-line seed between the brackets that already respects both exit tangents;
-        # the solver then relaxes it.  A poor seed makes VBD take far more iterations.
-        nodes = []
-        for i in range(n_seg + 1):
-            s = i / n_seg
-            blend = 3 * s * s - 2 * s * s * s
-            p = [
-                (1 - blend) * (b0[k] + d_base[k] * seg_len * i) + blend * (t0[k] - d_tip[k] * seg_len * (n_seg - i))
-                for k in range(3)
-            ]
-            nodes.append(p)
+        created = builder.add_rod([wp.vec3(*[float(v) for v in p]) for p in seed_nodes], **kwargs)
+        # Newton returns (body_ids, joint_ids); older builds returned nothing useful.
+        body_ids = list(created[0]) if isinstance(created, tuple) and created else list(
+            range(builder.body_count))
 
-        bodies = []
-        for i, p in enumerate(nodes):
-            body = builder.add_body(xform=wp.transform(p, wp.quat_identity()),
-                                    mass=float(carrier.get("mass_per_node", 0.02)))
-            builder.add_shape_capsule(body, radius=0.5 * math.hypot(h, w), half_height=0.5 * seg_len)
-            bodies.append(body)
-            # Clamp two nodes at each end: that is what encodes the bracket *orientation*.
-            if i <= 1 or i >= n_seg - 1:
-                builder.add_joint_fixed(-1, body)
+        # Pin two bodies at each end: two, not one, because a single fixed point would leave the
+        # bracket angle free, and a bracket does not allow that.
+        #
+        # parent_xform must carry the body's *current* world pose. Without it the fixed joint
+        # anchors the body to the world origin instead of to where the bracket is, the constraint
+        # is effectively absent, and the rod simply falls under gravity -- which looks like a
+        # converged shape and silently poisons any comparison made against it.
+        body_q = getattr(builder, "body_q", None)
+        for body in (body_ids[0], body_ids[1], body_ids[-2], body_ids[-1]):
+            xform = body_q[body] if body_q is not None else None
+            builder.add_joint_fixed(-1, body, parent_xform=xform)
 
-        for i in range(n_seg):
-            builder.add_joint_cable(
-                bodies[i], bodies[i + 1],
-                stretch_stiffness=stretch_k,
-                bend_stiffness=bend_k,
-                twist_stiffness=twist_k,
-                label=f"seg{i}",
-            )
+        # SolverVBD solves coloured groups in parallel, so the bodies have to be coloured before
+        # finalize(); without it the solver refuses the model outright.
+        if hasattr(builder, "color"):
+            builder.color()
+        elif hasattr(builder, "set_coloring"):
+            builder.set_coloring()
 
         model = builder.finalize()
         solver = SolverVBD(model, iterations=int(carrier.get("vbd_iterations", 20)))
@@ -151,14 +206,30 @@ def solve_newton(carrier: dict[str, Any], cases: list[dict[str, Any]], *, dahl: 
         control = model.control()
         dt = float(carrier.get("dt", 1.0 / 240.0)) / max(1, substeps)
 
+        contacts = None
         for _ in range(settle_steps):
             for _ in range(substeps):
-                contacts = model.collide(state_a) if hasattr(model, "collide") else None
                 solver.step(state_a, state_b, control, contacts, dt)
                 state_a, state_b = state_b, state_a
 
-        body_q = state_a.body_q.numpy()
-        results.append({"nodes": [[float(v) for v in body_q[i][:3]] for i in range(n_seg + 1)]})
+        settled_q = state_a.body_q.numpy()
+        nodes = [[float(v) for v in settled_q[i][:3]] for i in range(len(settled_q))]
+        finite = bool(np.all(np.isfinite(settled_q)))
+
+        # Boundary-condition gate. A reference that quietly ignored its anchors is worse than no
+        # reference at all, so check that the rod still starts at the bracket it was pinned to
+        # before handing the shape on for comparison.
+        anchor_error = float(np.linalg.norm(np.array(nodes[0]) - np.array(seed_nodes[0]))) if nodes else float("inf")
+        anchored = anchor_error < float(carrier.get("anchor_tolerance", 0.01))
+
+        note = ""
+        if not finite:
+            note = "diverged"
+        elif not anchored:
+            note = f"anchor not held: start moved {1000 * anchor_error:.0f} mm"
+
+        results.append({"nodes": nodes if (finite and anchored) else [], "settled": finite,
+                        "anchor_error": anchor_error, "unsupported_kwargs": dropped, "note": note})
     return results
 
 
@@ -183,6 +254,7 @@ def solve_mujoco(carrier: dict[str, Any], cases: list[dict[str, Any]], seeds: li
     twist = float(carrier.get("mj_twist", 1.0e6))
     bend = float(carrier.get("mj_bend", 1.0e5))
     damping = float(carrier.get("mj_damping", 0.05))
+    gravity_z = float(carrier.get("gravity", [0.0, 0.0, -9.81])[2])
 
     results: list[dict[str, Any]] = []
     for index, case in enumerate(cases):
@@ -202,7 +274,7 @@ def solve_mujoco(carrier: dict[str, Any], cases: list[dict[str, Any]], seeds: li
         xml = f"""
 <mujoco model="carrier">
   <extension><plugin plugin="mujoco.elasticity.cable"/></extension>
-  <option gravity="0 0 -9.81" timestep="0.002"/>
+  <option gravity="0 0 {gravity_z}" timestep="0.002"/>
   <worldbody>
     <body name="anchor" pos="{base[0]} {base[1]} {base[2]}">
       <composite type="cable" curve="s" initial="none" vertex="{verts}">
@@ -252,6 +324,10 @@ def main() -> int:
     ap.add_argument("--dahl", action="store_true",
                     help="Newton only: enable the Dahl cable-bending hysteresis model")
     ap.add_argument("--substeps", type=int, default=4)
+    ap.add_argument("--gravity", type=float, default=-9.81,
+                    help="gravity along Z. Pass 0 to compare pure elastic shape: the fast solver "
+                         "treats gravity as a heuristic sag term, so leaving it on confounds "
+                         "model error with a difference in how sag is modelled.")
     ap.add_argument("--settle-steps", type=int, default=400,
                     help="steps to run before reading the quasi-static shape")
     args = ap.parse_args()
@@ -267,6 +343,8 @@ def main() -> int:
     with open(args.cases) as f:
         payload = json.load(f)
     carrier = payload["carrier"]
+    carrier.setdefault("gravity", [0.0, 0.0, args.gravity])
+    carrier["gravity"] = [0.0, 0.0, args.gravity]
     cases = payload["cases"]
 
     try:

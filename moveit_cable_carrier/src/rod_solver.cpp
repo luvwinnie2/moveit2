@@ -180,19 +180,42 @@ void RodSolver::clampJoint(Eigen::Matrix3d& rotation) const
 {
   Eigen::Vector3d v = logSO3(rotation);
   const double theta_max = params_.maxTurnAngle();
+
+  // Split the joint rotation into twist about the carrier's own axis and bending perpendicular to
+  // it. They are different mechanical stops and must be limited separately: a 3D dresspack quotes
+  // a bend radius *and* a torsion stop of roughly +-10 deg per link, and lumping them into one
+  // magnitude bound lets a solve trade one for the other.
+  const Eigen::Vector3d axis = Eigen::Vector3d::UnitX();  // local +X runs along the carrier
+  double twist = v.dot(axis);
+  Eigen::Vector3d bend = v - twist * axis;
+
+  if (params_.twist_limit_per_link >= 0.0)
+  {
+    twist = std::clamp(twist, -params_.twist_limit_per_link, params_.twist_limit_per_link);
+  }
+
   if (params_.bend_mode == BendMode::Planar)
   {
-    // Only the component about the material bend axis survives: a linkless chain has a torsion
-    // stop and articulates about one axis. The back-stop then makes that component one-sided.
-    double s = v.dot(params_.bend_axis);
-    s = params_.unilateral ? std::clamp(s, 0.0, theta_max) : std::clamp(s, -theta_max, theta_max);
-    v = s * params_.bend_axis;
+    // A planar chain articulates about one axis only; the back-stop then makes it one-sided.
+    const Eigen::Vector3d bend_axis = (params_.bend_axis - params_.bend_axis.dot(axis) * axis);
+    if (bend_axis.norm() > 1e-9)
+    {
+      const Eigen::Vector3d unit = bend_axis.normalized();
+      double sbend = bend.dot(unit);
+      sbend = params_.unilateral ? std::clamp(sbend, 0.0, theta_max) : std::clamp(sbend, -theta_max, theta_max);
+      bend = sbend * unit;
+    }
+    else if (bend.norm() > theta_max)
+    {
+      bend *= theta_max / bend.norm();
+    }
   }
-  else if (v.norm() > theta_max)
+  else if (bend.norm() > theta_max)
   {
-    v *= theta_max / v.norm();
+    bend *= theta_max / bend.norm();
   }
-  rotation = expSO3(v);
+
+  rotation = expSO3(bend + twist * axis);
 }
 
 void RodSolver::forward(const Eigen::Isometry3d& base_bracket, const JointRotations& rotations,
@@ -362,27 +385,56 @@ CarrierShape RodSolver::solve(const Eigen::Isometry3d& base_bracket, const Eigen
   // segment length turns it straight into curvature and twist rate. The component along the
   // carrier's own axis is twist; what is perpendicular to it is bending.
   out.curvature.clear();
-  out.twist_rate.clear();
+  out.twist_per_link.clear();
   out.curvature.reserve(rotations.size());
-  out.twist_rate.reserve(rotations.size());
+  out.twist_per_link.reserve(rotations.size());
   out.max_curvature = 0.0;
-  out.max_twist_rate = 0.0;
+  out.max_twist_per_link = 0.0;
   for (const auto& rotation : rotations)
   {
     const Eigen::Vector3d v = logSO3(rotation);
-    const double twist = std::abs(v.x()) / seg_len;                       // local +X is the axis
-    const double bend = std::hypot(v.y(), v.z()) / seg_len;
+    const double twist = std::abs(v.x());                    // per link, local +X is the axis
+    const double bend = std::hypot(v.y(), v.z()) / seg_len;  // per metre => curvature
     out.curvature.push_back(bend);
-    out.twist_rate.push_back(twist);
+    out.twist_per_link.push_back(twist);
     out.max_curvature = std::max(out.max_curvature, bend);
-    out.max_twist_rate = std::max(out.max_twist_rate, twist);
+    out.max_twist_per_link = std::max(out.max_twist_per_link, twist);
   }
 
-  const double outer_radius = 0.5 * std::hypot(params_.outer_height, params_.outer_width);
-  out.bend_utilisation = out.max_curvature * params_.bend_radius;
-  // Euler-Bernoulli: the outermost fibre sees sigma = E * y * kappa.
-  out.max_bending_stress = params_.youngs_modulus * outer_radius * out.max_curvature;
-  out.max_torsional_stress = params_.shear_modulus * outer_radius * out.max_twist_rate;
+  out.bend_utilisation = out.max_curvature * params_.shapeBendRadius();
+  out.twist_utilisation = params_.twist_limit_per_link > 0.0
+                              ? out.max_twist_per_link / params_.twist_limit_per_link
+                              : 0.0;
+
+  // What the cables inside see. The achieved radius is compared against each cable's own published
+  // minimum, expressed the way cable makers express it: as a multiple of the outer diameter.
+  const double achieved_radius = out.min_bend_radius();
+  out.min_cable_bend_ratio = 0.0;
+  out.required_cable_bend_ratio = 0.0;
+  out.max_cable_strain = 0.0;
+  out.worst_cable.clear();
+  double worst_headroom = std::numeric_limits<double>::max();
+  for (const auto& cable : params_.inner_cables)
+  {
+    if (cable.outer_diameter <= 0.0)
+    {
+      continue;
+    }
+    const double ratio = achieved_radius > 0.0 ? achieved_radius / cable.outer_diameter
+                                               : std::numeric_limits<double>::max();
+    const double headroom = ratio - cable.min_bend_factor;
+    if (headroom < worst_headroom)
+    {
+      worst_headroom = headroom;
+      out.min_cable_bend_ratio = ratio;
+      out.required_cable_bend_ratio = cable.min_bend_factor;
+      out.worst_cable = cable.name;
+    }
+    if (achieved_radius > 0.0)
+    {
+      out.max_cable_strain = std::max(out.max_cable_strain, 0.5 * cable.outer_diameter / achieved_radius);
+    }
+  }
 
   // Edge lengths and the bend limit hold by construction, so feasibility is exactly "did the far
   // bracket end up where the robot says it is".

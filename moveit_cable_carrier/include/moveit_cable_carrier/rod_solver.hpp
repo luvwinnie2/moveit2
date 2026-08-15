@@ -24,10 +24,14 @@ struct CarrierShape
   /** Per-joint curvature [1/m]. Lets a caller see *where* along the run the carrier is worked
    *  hardest, not just how hard. */
   std::vector<double> curvature;
-  /** Per-joint twist rate about the carrier axis [rad/m]. A 3D carrier has a torsion stop, so a
-   *  large value here means the mounting is forcing torsion the hardware is meant to refuse. */
-  std::vector<double> twist_rate;
-  double max_twist_rate = 0.0;
+  /** Per-joint twist about the carrier axis [rad per link]. Directly comparable to the torsion
+   *  stop a 3D carrier quotes (about +-10 deg per link), which is why it is per link and not
+   *  per metre. */
+  std::vector<double> twist_per_link;
+  double max_twist_per_link = 0.0;
+  /** Fraction of the torsion stop used up. >1 means the mounting is forcing more twist than the
+   *  hardware allows, which shows up in service as links popping apart. */
+  double twist_utilisation = 0.0;
 
   /** max_curvature * bend_radius. 1.0 = running exactly at the hardware's minimum radius,
    *  >1.0 = over-bent. This is the single number to watch. */
@@ -35,10 +39,30 @@ struct CarrierShape
   /** Tightest radius actually reached [m] (= 1/max_curvature). */
   double min_bend_radius() const { return max_curvature > 1e-9 ? 1.0 / max_curvature : 0.0; }
 
-  /** Peak bending stress from Euler-Bernoulli: sigma = E * y * kappa, with y the outer radius. */
-  double max_bending_stress = 0.0;   ///< Pa
-  /** Peak torsional shear stress: tau = G * r * dtheta/ds. */
-  double max_torsional_stress = 0.0; ///< Pa
+  // ---- what the cables inside actually see ---------------------------------
+  /** Tightest achieved radius divided by the worst inner cable's outer diameter. This is the
+   *  number the cable industry sizes against: continuous-flex robot cable wants about 10x OD, and
+   *  qualified high-flex constructions about 7.5x OD in compact runs. Going below the validated
+   *  figure is what turns a ten-million-cycle life into a fraction of it.
+   *  0 when no inner cables are declared. */
+  double min_cable_bend_ratio = 0.0;
+  /** Required ratio for the worst cable, from its own spec. */
+  double required_cable_bend_ratio = 0.0;
+  /** Name of the cable that is closest to its limit. */
+  std::string worst_cable;
+  /** Outer-fibre bending strain of that cable, (OD/2) / R. Dimensionless.
+   *
+   *  Deliberately not a stress in Pa: the carrier shell is an articulated ball-and-socket chain
+   *  that bends at its joints, so Euler-Bernoulli beam stress on the shell is meaningless and
+   *  produces numbers far past the yield of any polymer it is made from. Strain of the cable
+   *  inside is the quantity that governs conductor fatigue. */
+  double max_cable_strain = 0.0;
+
+  /** True when every declared cable stays within its own minimum bend radius. */
+  bool cablesWithinLimit() const
+  {
+    return required_cable_bend_ratio <= 0.0 || min_cable_bend_ratio >= required_cable_bend_ratio;
+  }
 
   bool empty() const { return nodes.size() < 2; }
 

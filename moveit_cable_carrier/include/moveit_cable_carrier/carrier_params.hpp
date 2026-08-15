@@ -20,6 +20,54 @@ enum class BendMode
   Spatial   ///< curvature in any direction, magnitude bounded
 };
 
+/** What kind of flexible run this is. The kind decides which limits are meaningful, so it is not
+ *  cosmetic: a ball-and-socket carrier has a hard bend radius and a per-link torsion stop, whereas
+ *  a bare cable has no stop at all and is limited only by a multiple of its own diameter. */
+enum class CarrierKind
+{
+  /** 3D robot dresspack, ball-and-socket links (igus triflex R and equivalents). Hard minimum
+   *  bend radius, isotropic bending, and a torsion stop of roughly +-10 deg per link. */
+  ArticulatedCarrier,
+  /** Planar link chain / linkless cable chain for linear axes (Kunimori Silveyer KSL/KSH,
+   *  classic drag chains). One bend axis, back-stopped, essentially no torsion. */
+  PlanarChain,
+  /** Bare cable or bundle with no carrier around it. No hard stop: the limit is the published
+   *  minimum bend radius, conventionally a multiple of the outer diameter. */
+  BareCable,
+  /** Corrugated conduit. Bends freely in all directions; the limit comes from the conduit spec
+   *  and it offers no torsion stop, which is precisely why triflex is preferred on robots. */
+  CorrugatedHose,
+};
+
+/** A cable or hose routed *inside* the carrier.
+ *
+ *  The carrier's own bend limit is not the whole story: what actually fails in service is usually
+ *  a conductor inside it. Industry practice sizes that by a multiple of the cable's outer
+ *  diameter -- 10x OD is the usual figure for continuous-flex robot cables, with 7.5x OD only for
+ *  qualified high-flex constructions in compact runs. */
+struct InnerCable
+{
+  std::string name = "cable";
+  double outer_diameter = 0.008;   ///< m
+  /** Minimum bend radius as a multiple of the outer diameter. */
+  double min_bend_factor = 10.0;
+  int count = 1;
+  /** Minimum bend radius in metres implied by the factor. */
+  double minBendRadius() const { return min_bend_factor * outer_diameter; }
+};
+
+/** How the fixed end is attached, which changes what the run is allowed to do.
+ *
+ *  Robot dresspacks are mounted either rigidly to a link, or on a pivot/rotating flange that lets
+ *  the run swing, or through a retraction unit whose spring takes up the service loop so it cannot
+ *  flap into the work area. */
+enum class MountStyle
+{
+  Fixed,
+  Pivot,
+  Retraction,
+};
+
 /** Physical + mounting description of one cable carrier run.
  *
  * Lengths are metres, angles radians. Defaults describe a Kunimori Silveyer KSL-10
@@ -33,6 +81,25 @@ struct CarrierParams
   double bend_radius = 0.040;  ///< R_min, the hard minimum bend radius of the chain
   double outer_height = 0.016; ///< cross-section height (bend direction)
   double outer_width = 0.026;  ///< cross-section width
+
+  // ---- kind ----------------------------------------------------------------
+  CarrierKind kind = CarrierKind::ArticulatedCarrier;
+  /** Cables/hoses routed inside. Used for the bend-radius check that actually predicts failure. */
+  std::vector<InnerCable> inner_cables;
+
+  /** Torsion stop, radians per link. A triflex-style carrier allows roughly +-10 deg of twist per
+   *  link about its own axis; a planar chain allows essentially none; a bare cable has no stop.
+   *  Negative disables the limit. */
+  double twist_limit_per_link = 10.0 * M_PI / 180.0;
+
+  // ---- mounting style ------------------------------------------------------
+  MountStyle mount_style = MountStyle::Fixed;
+  /** Retraction units pull the service loop back with a roughly constant spring force. Modelled
+   *  as a directional bias on the slack rather than a force, since the shape solve is quasi-static:
+   *  0 disables it, 1 pulls the slack fully towards `retraction_dir`. */
+  double retraction_bias = 0.0;
+  /** Direction, in the base bracket frame, that the retraction unit pulls the loop. */
+  Eigen::Vector3d retraction_dir = -Eigen::Vector3d::UnitX();
 
   // ---- mechanics -----------------------------------------------------------
   BendMode bend_mode = BendMode::Planar;
@@ -103,10 +170,36 @@ struct CarrierParams
   {
     return length / static_cast<double>(num_segments);
   }
-  /** Maximum turn angle between consecutive segments implied by R_min. */
+  /** Radius that mechanically limits the *shape*.
+   *
+   *  For a carrier this is its own stop: the hardware physically refuses to bend tighter, and a
+   *  cable inside that is unhappy about it gets damaged rather than stopping the chain. For a bare
+   *  cable or a hose there is no stop, so its own published limit is what governs. */
+  double shapeBendRadius() const
+  {
+    return (kind == CarrierKind::BareCable || kind == CarrierKind::CorrugatedHose)
+               ? effectiveBendRadius()
+               : bend_radius;
+  }
+  /** Maximum turn angle between consecutive segments implied by the shape limit. */
   double maxTurnAngle() const
   {
-    return segmentLength() / bend_radius;
+    return segmentLength() / shapeBendRadius();
+  }
+  /** Tightest bend radius any cable inside will tolerate, 0 if none are declared. */
+  double innerCableLimitRadius() const
+  {
+    double worst = 0.0;
+    for (const auto& c : inner_cables)
+    {
+      worst = std::max(worst, c.minBendRadius());
+    }
+    return worst;
+  }
+  /** The binding limit: the carrier's own stop, or its contents, whichever is tighter. */
+  double effectiveBendRadius() const
+  {
+    return std::max(bend_radius, innerCableLimitRadius());
   }
 };
 

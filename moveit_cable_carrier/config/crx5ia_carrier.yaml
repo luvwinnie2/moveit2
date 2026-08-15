@@ -43,9 +43,22 @@ carriers:
 
     # ---- 保守性 -----------------------------------------------------------
     # モデル誤差・ヒステリシス・矩形断面をカプセルで近似したことの差分をまとめて吸収する。
-    # 実機／Newton との突き合わせ（scripts/compare_reference.py）で得た最大偏差を
-    # ここに積むこと。
-    safety_margin: 0.006
+    #
+    # 【実測に基づく値】MuJoCo elasticity.cable を参照ソルバとして 62 姿勢で突き合わせた結果:
+    #     平均偏差   0.44 mm
+    #     最大偏差  21.7 mm  (p99 も同値 = 外れ値 1 件が支配)
+    # 最大偏差 21.7 mm に、ブラケットのがたと製造公差分 2 mm を足して 0.024 とした。
+    #
+    # 重要: これは「重力なし」での比較値。重力ありだと平均 63.6 mm / 最大 193 mm まで
+    # 開くが、それはモデル誤差ではなく **重力のモデル化方法の差**（本ソルバの
+    # gravity_sag はヒューリスティック）。垂れが効く長い配線では、この値では
+    # 足りないので別途 gravity_sag を実測に合わせること。
+    #
+    # 再現:  carrier_benchmark ... 4 ours.json cases.json
+    #        generate_reference_shapes.py --backend mujoco --seed ours.json --gravity 0 \
+    #            cases.json ref.json
+    #        compare_reference.py ours.json ref.json
+    safety_margin: 0.024
     simplify_deviation: 0.002   # 直線区間を間引く。半径に最大 2 mm 上乗せされる
     gravity_sag: 0.15
     gravity_dir: [0.0, 0.0, -1.0]
@@ -67,3 +80,62 @@ carriers:
       - J4_link
       - J5_link
       - J6_link
+
+    # ---- 型式（carrier_types.yaml の fl23_cutter_dresspack 相当）----------
+    kind: articulated_carrier
+    twist_limit_per_link_deg: 10.0    # triflex R 系のねじれストッパ公称値
+    mount_style: fixed
+
+    # 中を通る実配線。キャリア自体は R=40 mm まで曲がるが、φ10 のロボット
+    # ケーブルは 10 倍則で 100 mm を要求するので、**効く制約はケーブル側**。
+    inner_cables:
+      - name: cutter_power_signal
+        outer_diameter: 0.010
+        min_bend_factor: 10.0
+      - name: cutter_air
+        outer_diameter: 0.008
+        min_bend_factor: 8.0
+        count: 2
+
+  # ===========================================================================
+  # 上腕側の配線（軸1 → 軸3）。
+  # 実機のドレスパックは軸1 下のベースプレートから軸6 まで通すが、
+  # 軸3 で一度固定するのが定石なので、上腕側と手首側の 2 本に分けて持つ。
+  # 本パッケージは複数本を同時に扱える。
+  # ===========================================================================
+  - name: crx5ia_upperarm_dresspack
+    kind: articulated_carrier
+    bend_radius: 0.060
+    outer_height: 0.036
+    outer_width: 0.036
+    bend_mode: spatial
+    unilateral: false
+    twist_limit_per_link_deg: 10.0
+    mount_style: fixed
+    length: 0.62
+    num_segments: 20
+    max_iterations: 200
+    tolerance: 0.0001
+    safety_margin: 0.008
+    simplify_deviation: 0.002
+    gravity_sag: 0.2
+
+    base_link: robot_base
+    base_mount:
+      xyz: [0.0, -0.13, 0.10]
+      rpy: [0.0, -1.5708, 0.0]     # +X を上向き（+Z）に = ケーブルの進行方向
+    tip_link: J3_link
+    tip_mount:
+      xyz: [0.0, -0.12, 0.02]
+      rpy: [0.0, -1.5708, 0.0]
+
+    touch_links:
+      - robot_base
+      - J1_link
+      - J2_link
+      - J3_link
+
+    inner_cables:
+      - name: main_harness
+        outer_diameter: 0.016
+        min_bend_factor: 10.0
