@@ -286,20 +286,16 @@ class StudioHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - required name
         path = self.path.split("?")[0]
 
-        if path in ("/", "/index.html"):
-            self._file("index.html", "text/html; charset=utf-8")
-        elif path == "/studio.js":
-            self._file("studio.js", "application/javascript; charset=utf-8")
-        elif path == "/studio.css":
-            self._file("studio.css", "text/css; charset=utf-8")
-        elif path == "/api/state":
+        if path == "/api/state":
             self._json(self._state_payload())
         elif path == "/api/behaviors":
             self._json(self._behaviors_payload())
         elif path.startswith("/api/objective/"):
             self._json(self._objective_payload(path.rsplit("/", 1)[-1]))
-        else:
+        elif path.startswith("/api/"):
             self._json({"error": "not found"}, 404)
+        else:
+            self._static(path)
 
     def do_POST(self) -> None:  # noqa: N802
         path = self.path.split("?")[0]
@@ -329,13 +325,45 @@ class StudioHandler(BaseHTTPRequestHandler):
 
     # ---- payloads ------------------------------------------------------------------------------
 
-    def _file(self, name: str, content_type: str) -> None:
-        path = os.path.join(self.web_root, name)
+    #: Only these are served. An allowlist rather than mimetypes.guess_type because this process
+    #: sits on the robot's network and has no business serving whatever happens to be in the
+    #: directory.
+    CONTENT_TYPES = {
+        ".html": "text/html; charset=utf-8",
+        ".js": "application/javascript; charset=utf-8",
+        ".css": "text/css; charset=utf-8",
+        ".svg": "image/svg+xml",
+        ".png": "image/png",
+        ".woff2": "font/woff2",
+        ".json": "application/json",
+        ".map": "application/json",
+    }
+
+    def _static(self, url_path: str) -> None:
+        """Serve a built asset out of web_root.
+
+        The bundler emits content-hashed filenames, so the old fixed three-file routing could not
+        serve them. Resolution goes through realpath and is checked against web_root: a request for
+        /../../etc/passwd must not escape, and string prefix checks on unresolved paths are exactly
+        how that goes wrong.
+        """
+        relative = url_path.lstrip("/") or "index.html"
+        root = os.path.realpath(self.web_root)
+        target = os.path.realpath(os.path.join(root, relative))
+        if target != root and not target.startswith(root + os.sep):
+            self._json({"error": "not found"}, 404)
+            return
+
+        content_type = self.CONTENT_TYPES.get(os.path.splitext(target)[1].lower())
+        if content_type is None:
+            self._json({"error": "not found"}, 404)
+            return
+
         try:
-            with open(path, "rb") as handle:
+            with open(target, "rb") as handle:
                 self._send(200, handle.read(), content_type)
         except OSError:
-            self._json({"error": f"{name} is missing from {self.web_root}"}, 500)
+            self._json({"error": f"{relative} is missing from {self.web_root}"}, 404)
 
     def _state_payload(self) -> dict[str, Any]:
         payload = self.node.snapshot()

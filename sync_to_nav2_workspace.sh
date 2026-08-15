@@ -20,6 +20,8 @@ FORK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS="${NAV2_WORKSPACE:-/misc/Work39_SSD/cheesiang_leow/nav2_workspace}"
 DEST="$WS/src"
 
+# node_modules is excluded deliberately: the Studio's frontend builds in this fork (where there is
+# room) and only its built output goes to the workspace, whose filesystem has under 2 GB free.
 PACKAGES=(
   moveit_cable_carrier
   moveit2_extended_msgs
@@ -49,7 +51,7 @@ for pkg in "${PACKAGES[@]}"; do
   if (( check_only )); then
     # --dry-run with an itemised list: anything printed is drift.
     drift="$(rsync -rc --dry-run --delete --itemize-changes \
-             --exclude='README.md' --exclude='.git' \
+             --exclude='README.md' --exclude='.git' --exclude='node_modules' --exclude='frontend/node_modules' --exclude='package-lock.json' \
              "$src/" "$DEST/$pkg/" 2>/dev/null || true)"
     if [[ -n "$drift" ]]; then
       echo "DRIFT in $pkg:"; echo "$drift" | sed 's/^/  /'
@@ -63,7 +65,7 @@ for pkg in "${PACKAGES[@]}"; do
   mkdir -p "$DEST/$pkg"
   # -c compares checksums rather than timestamps, so a copied-back file with a newer mtime but
   # identical content does not churn. README.md is fork-only on purpose.
-  rsync -rc --delete --exclude='README.md' --exclude='.git' "$src/" "$DEST/$pkg/"
+  rsync -rc --delete --exclude='README.md' --exclude='.git' --exclude='node_modules' --exclude='frontend/node_modules' --exclude='package-lock.json' "$src/" "$DEST/$pkg/"
   echo "synced $pkg"
 done
 

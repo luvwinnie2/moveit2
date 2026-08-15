@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "test/build",
+    "rootDir": "src",
+    "jsx": "preserve",
+    "noUnusedLocals": false
+  },
+  "include": ["src/btxml.ts", "src/types.ts", "src/layout.ts"]
+}

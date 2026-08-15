@@ -1,3 +1,5 @@
+from glob import glob
+
 from setuptools import setup
 
 package_name = "moveit2_extended_studio"
@@ -10,9 +12,11 @@ setup(
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
         # The UI is served from the share directory, so it is installed rather than read out of
-        # the source tree.
-        ("share/" + package_name + "/web",
-         ["web/index.html", "web/studio.js", "web/studio.css"]),
+        # the source tree. The bundler content-hashes asset filenames, so they are globbed rather
+        # than listed: pinning the names here would mean editing setup.py on every rebuild, and
+        # forgetting to would install an index.html pointing at assets that are not there.
+        ("share/" + package_name + "/web", ["web/index.html"]),
+        ("share/" + package_name + "/web/assets", glob("web/assets/*")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,

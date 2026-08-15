@@ -1,0 +1,27 @@
+{
+  "name": "moveit2-extended-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Behavior Tree editor and Objective console for moveit2-extended.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": "tsc -p tsconfig.test.json && node --test test/*.test.mjs",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@xyflow/react": "^12.11.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "playwright": "^1.62.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  }
+}
