@@ -16,6 +16,26 @@
 # To replace an entry with a real hull: open the USD in Isaac Sim, export the collision meshes, run
 # a convex decomposition, and switch that tool to mesh shapes. Until then the numbers here are
 # honest about what they are.
+#
+# carrier_config IS THE SAME FILE FOR EVERY TOOL, and that is a real gap rather than an oversight
+# left undocumented. `mass` below is recorded but nothing reads it: the dresspack is mounted on the
+# arm, not on the tool, so the carrier solve depends on the arm's pose and not on what is bolted to
+# the flange. Measured with scripts/tool_carrier_benchmark.py over seven joint targets:
+#
+#     tool            success   worst bend   worst twist
+#     cutter            7/7        0.713        0.466
+#     robotiq_2f140     7/7        0.655        0.466
+#     robotiq_2f85      7/7        0.656        0.466
+#     robotiq_hande     7/7        0.656        0.466
+#
+# The heaviest tool is not the worst -- the 0.35 kg cutter is -- and the small differences that do
+# appear come from which path the planner happened to find, not from the tool. So "switch the
+# carrier with the tool" currently changes nothing.
+#
+# Making it mean something needs per-tool carrier YAML with real numbers: a heavier end-effector
+# sags the run further and wants a larger safety_margin, and a longer one shortens the usable span
+# between brackets. Those figures have to be measured or taken off a datasheet. Inventing them here
+# would make the feature look alive while being wrong, which is worse than the honest no-op it is.
 
 mount_link: flange
 

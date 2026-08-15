@@ -137,6 +137,41 @@ private:
       request->scene.robot_state.attached_collision_objects.push_back(remove);
     }
 
+    // ...and then actually delete it, which is a SEPARATE operation.
+    //
+    // AttachedCollisionObject::REMOVE does not mean "delete": MoveIt DETACHES the object and puts
+    // it straight back into the world at the pose it had -- which is on the flange. Detaching
+    // alone therefore leaves a gripper-shaped obstacle exactly where the next gripper is about to
+    // go, and every subsequent plan fails on a collision with a tool that is not on the robot.
+    // Found by tool_carrier_benchmark.py: the cutter planned 7/7 and every gripper 0/7, with
+    // move_group reporting contacts against `tool__robotiq_2f140` of type 'Object' -- a world
+    // object, not an attached one.
+    //
+    // Ordering within the one diff is safe: PlanningScene::setPlanningSceneDiffMsg applies
+    // robot_state (the detach, planning_scene.cpp:1340) before world.collision_objects (the
+    // delete, :1358), so by the time this is processed the object is in the world to be deleted.
+    //
+    // ONLY the tool that was just detached. A tempting "sweep every id the registry knows" is
+    // wrong: processCollisionObjectMsg returns false for an id that is not in the world, and
+    // setPlanningSceneDiffMsg ANDs those results together, so one absent id makes
+    // ApplyPlanningScene reject the entire change -- including the attach. Tried it; every switch
+    // then failed with "the planning scene rejected the change".
+    //
+    // And not at all when the tool being fitted is the one already fitted. Both the detach and the
+    // attach live in robot_state, so they are applied in order and the ADD takes the object back
+    // out of the world before this is reached -- leaving nothing to delete, which is once again a
+    // false result that rejects the whole diff. Re-fitting the current tool is a legitimate thing
+    // to ask for (it repairs a scene someone edited by hand), so it has to work.
+    const bool refitting_same_tool = tool && tool->info.name == active_;
+    if (!active_.empty() && !refitting_same_tool)
+    {
+      moveit_msgs::msg::CollisionObject gone;
+      gone.id = objectId(active_);
+      gone.header.frame_id = registry_.mount_link;
+      gone.operation = moveit_msgs::msg::CollisionObject::REMOVE;
+      request->scene.world.collision_objects.push_back(gone);
+    }
+
     if (tool)
     {
       moveit_msgs::msg::AttachedCollisionObject attached;
