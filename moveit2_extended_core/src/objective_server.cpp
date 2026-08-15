@@ -623,11 +623,13 @@ void ObjectiveServer::onReloadObjectives(const std::shared_ptr<srvs::ReloadObjec
 
 bool ObjectiveServer::validateXml(const std::string& xml, std::string& xml_error, std::vector<std::string>& missing,
                                   std::vector<std::string>& unknown_ports,
+                                  std::vector<std::string>& invalid_values,
                                   std::vector<std::string>& tree_ids) const
 {
   xml_error.clear();
   missing.clear();
   unknown_ports.clear();
+  invalid_values.clear();
   tree_ids.clear();
 
   // Order matters. BT::VerifyXML rejects unknown node types as well as malformed XML, so running
@@ -644,6 +646,7 @@ bool ObjectiveServer::validateXml(const std::string& xml, std::string& xml_error
   tree_ids = treeIdsInXml(xml);
   missing = missingBehaviorsInXml(*factory_, xml);
   unknown_ports = unknownPortsInXml(*factory_, xml);
+  invalid_values = invalidPortValuesInXml(*factory_, xml);
   if (!missing.empty())
   {
     return false;
@@ -664,14 +667,16 @@ bool ObjectiveServer::validateXml(const std::string& xml, std::string& xml_error
     return false;
   }
 
-  return unknown_ports.empty();
+  // Port literals are checked here rather than left to BehaviorTree.CPP, which parses them lazily
+  // on the first getInput() -- so a malformed pose builds fine and throws mid-motion.
+  return unknown_ports.empty() && invalid_values.empty();
 }
 
 void ObjectiveServer::onValidateObjectiveXml(const std::shared_ptr<srvs::ValidateObjectiveXml::Request> request,
                                              std::shared_ptr<srvs::ValidateObjectiveXml::Response> response)
 {
   response->valid = validateXml(request->xml, response->xml_error, response->missing_behaviors,
-                                response->unknown_ports, response->tree_ids);
+                                response->unknown_ports, response->invalid_port_values, response->tree_ids);
 }
 
 void ObjectiveServer::onSaveObjectiveXml(const std::shared_ptr<srvs::SaveObjectiveXml::Request> request,
@@ -681,7 +686,7 @@ void ObjectiveServer::onSaveObjectiveXml(const std::shared_ptr<srvs::SaveObjecti
   // server then refuses to load.
   std::vector<std::string> tree_ids;
   if (!validateXml(request->xml, response->xml_error, response->missing_behaviors, response->unknown_ports,
-                   tree_ids))
+                   response->invalid_port_values, tree_ids))
   {
     response->success = false;
     response->message = "refused to save: the tree would not build";

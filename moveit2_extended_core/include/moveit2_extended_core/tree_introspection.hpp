@@ -71,6 +71,19 @@ std::vector<std::string> missingBehaviorsInXml(const BtFactory& factory, const s
  *  formatted "NodeInstanceName.port_name" so an editor can point at the field. */
 std::vector<std::string> unknownPortsInXml(const BtFactory& factory, const std::string& xml);
 
+/** Port values in the XML that cannot be parsed as the port's declared type.
+ *
+ *  This check exists because BehaviorTree.CPP parses a port literal LAZILY -- on the first
+ *  getInput(), not when the tree is built. A malformed pose written into an Objective therefore
+ *  survives tree construction and throws mid-run, quite possibly after the arm has already moved
+ *  somewhere. Verified behaviour, not speculation: the test that discovered it is in
+ *  moveit2_extended_behaviors/test/test_cross_library_ports.cpp.
+ *
+ *  Entries are "NodeInstanceName.port_name: why", so an editor can point at the field and say what
+ *  is wrong with it. Values that reference the blackboard ("{key}") are skipped: their type is not
+ *  known until run time. */
+std::vector<std::string> invalidPortValuesInXml(const BtFactory& factory, const std::string& xml);
+
 /** Well-formedness only: does this text parse as XML at all?
  *
  *  Separate from BT::VerifyXML on purpose. VerifyXML also rejects unknown node types, so using it

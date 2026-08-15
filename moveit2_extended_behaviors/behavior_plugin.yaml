@@ -1,0 +1,6 @@
+# Found by the Objective server through the ament index resource
+# "moveit2_extended_behavior_plugin". Installing this package is all it takes for these Behaviors
+# to appear -- no edit to the server's configuration, and no edit to any other package.
+behavior_loader_plugins:
+  moveit2_extended_behaviors:
+    - moveit2_extended::behaviors::GeneralBehaviorsLoader

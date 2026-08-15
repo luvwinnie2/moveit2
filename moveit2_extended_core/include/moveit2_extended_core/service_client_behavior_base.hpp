@@ -85,7 +85,12 @@ private:
       return BtStatus::FAILURE;
     }
 
-    future_ = client_->async_send_request(request.value()).future.share();
+    // The request id is kept because that -- not the future -- is what remove_pending_request()
+    // takes in Humble, and abandoning a request without it leaks an entry in the client's pending
+    // map for every halt.
+    auto pending = client_->async_send_request(request.value());
+    request_id_ = pending.request_id;
+    future_ = pending.future.share();
     started_at_ = std::chrono::steady_clock::now();
     return BtStatus::RUNNING;
   }
@@ -129,13 +134,14 @@ private:
     if (client_ && future_.valid())
     {
       // The server keeps going; this only stops us waiting. See the class comment.
-      client_->remove_pending_request(future_);
+      client_->remove_pending_request(request_id_);
       RCLCPP_WARN(getLogger(),
                   "abandoned the request to '%s'. ROS services cannot be cancelled, so the server "
                   "will still carry it out.",
                   service_name_.c_str());
     }
     future_ = {};
+    request_id_ = 0;
   }
 
   std::string default_service_name_;
@@ -143,6 +149,7 @@ private:
   typename rclcpp::Client<ServiceT>::SharedPtr client_;
   BehaviorContext::CallbackIsland island_;
   typename rclcpp::Client<ServiceT>::SharedFuture future_;
+  int64_t request_id_ = 0;
   std::chrono::steady_clock::time_point started_at_;
 };
 

@@ -167,6 +167,9 @@ def main() -> int:
     names = [b.registration_name for b in response.behaviors]
     checks.check("LogMessage" in names, "our Behaviors are listed", f"{len(names)} behaviors")
     checks.check("Sequence" in names, "BehaviorTree.CPP built-ins are listed too")
+    checks.check({"MoveToJointState", "MoveToPose", "ExecuteTrajectory", "WaitForUserTrajectoryApproval"}
+                 <= set(names),
+                 "Behaviors from a SECOND package are there, discovered with no config change")
     log_message = next((b for b in response.behaviors if b.registration_name == "LogMessage"), None)
     checks.check(log_message is not None and {p.name for p in log_message.ports} >= {"message", "level"},
                  "a Behavior's ports are reported, so the editor can offer them")
@@ -195,8 +198,30 @@ def main() -> int:
                            xml='<root main_tree_to_execute="A"><BehaviorTree ID="A">'
                                '<LogMessage name="oops" mesage="typo"/></BehaviorTree></root>'))
     checks.check(not typo.valid and "oops.mesage" in list(typo.unknown_ports),
-                 "a mistyped port is caught and pointed at",
+                 "a mistyped port NAME is caught and pointed at",
                  str(list(typo.unknown_ports)))
+
+    # A malformed port VALUE is a separate problem with a separate fix, and it is the one
+    # BehaviorTree.CPP itself will not catch: it parses port literals lazily, so a bad pose builds
+    # fine and then quietly fails mid-run when that branch is finally reached.
+    bad_value = checks.call(ValidateObjectiveXml, "/objective_server/validate_objective_xml",
+                            ValidateObjectiveXml.Request(
+                                xml='<root main_tree_to_execute="A"><BehaviorTree ID="A">'
+                                    '<IsPoseNearIdentity name="bad_pose" pose="not_enough;fields"/>'
+                                    "</BehaviorTree></root>"))
+    checks.check(not bad_value.valid, "a malformed port VALUE is rejected")
+    checks.check(any("bad_pose.pose" in entry for entry in bad_value.invalid_port_values),
+                 "and the offending field is named",
+                 str(list(bad_value.invalid_port_values)))
+
+    # A {blackboard} reference has no type until run time and must not be judged as a literal.
+    reference = checks.call(ValidateObjectiveXml, "/objective_server/validate_objective_xml",
+                            ValidateObjectiveXml.Request(
+                                xml='<root main_tree_to_execute="A"><BehaviorTree ID="A">'
+                                    '<IsPoseNearIdentity name="from_bb" pose="{some_pose}"/>'
+                                    "</BehaviorTree></root>"))
+    checks.check(reference.valid, "a {blackboard} reference is not mistaken for a bad literal",
+                 str(list(reference.invalid_port_values)))
 
     print("\n[8] saving refuses to write a tree that would not build")
     refused = checks.call(SaveObjectiveXml, "/objective_server/save_objective_xml",

@@ -54,6 +54,10 @@ set(THIS_PACKAGE_DEPS
 add_library(${PROJECT_NAME} SHARED
   src/port_conversions.cpp
   src/moveit_goal_helpers.cpp
+  src/motion_behaviors.cpp
+  src/scene_behaviors.cpp
+  src/utility_behaviors.cpp
+  src/ui_behaviors.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -64,13 +68,34 @@ ament_target_dependencies(${PROJECT_NAME} ${THIS_PACKAGE_DEPS})
 # boundaries, so hidden visibility would make every cross-library port read throw.
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_VISIBILITY_PRESET default VISIBILITY_INLINES_HIDDEN OFF)
 
-install(TARGETS ${PROJECT_NAME}
+# The loader plugin lives in its own library so that the Behaviors can be linked directly by a
+# downstream package without also dlopen'ing the loader.
+add_library(${PROJECT_NAME}_plugin SHARED src/behaviors_loader.cpp)
+target_include_directories(${PROJECT_NAME}_plugin PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(${PROJECT_NAME}_plugin ${THIS_PACKAGE_DEPS})
+target_link_libraries(${PROJECT_NAME}_plugin ${PROJECT_NAME})
+set_target_properties(${PROJECT_NAME}_plugin PROPERTIES CXX_VISIBILITY_PRESET default
+                                                        VISIBILITY_INLINES_HIDDEN OFF)
+
+install(TARGETS ${PROJECT_NAME} ${PROJECT_NAME}_plugin
   EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
 install(DIRECTORY include/ DESTINATION include)
+install(FILES behavior_plugin.yaml behavior_loader_plugin_description.xml
+  DESTINATION share/${PROJECT_NAME})
+
+pluginlib_export_plugin_description_file(moveit2_extended_core behavior_loader_plugin_description.xml)
+
+# The one line that makes these Behaviors appear in the Objective server, with no edit anywhere
+# else. Copy it into any new Behavior package.
+ament_index_register_resource("moveit2_extended_behavior_plugin"
+  CONTENT "share/${PROJECT_NAME}/behavior_plugin.yaml")
 
 ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME})
@@ -90,6 +115,14 @@ if(BUILD_TESTING)
   if(TARGET test_moveit_goal_helpers)
     target_link_libraries(test_moveit_goal_helpers ${PROJECT_NAME})
     ament_target_dependencies(test_moveit_goal_helpers ${THIS_PACKAGE_DEPS})
+  endif()
+
+  # Loads the Behaviors through pluginlib exactly as the server does, so the cross-library
+  # BT::Any/type_index path is exercised rather than assumed.
+  ament_add_gtest(test_cross_library_ports test/test_cross_library_ports.cpp)
+  if(TARGET test_cross_library_ports)
+    target_link_libraries(test_cross_library_ports ${PROJECT_NAME})
+    ament_target_dependencies(test_cross_library_ports ${THIS_PACKAGE_DEPS})
   endif()
 endif()
 

@@ -1,10 +1,11 @@
 # Check a tree without saving or running it. The browser editor calls this on every save, and may
 # call it while typing.
 #
-# Three separate checks, reported separately because they need different fixes:
-#   - XML that BehaviorTree.CPP's own VerifyXML rejects        -> xml_error
-#   - nodes the factory has no builder for                     -> missing_behaviors
-#   - ports named on a node that the node does not declare     -> unknown_ports
+# Four separate checks, reported separately because they need four different fixes:
+#   - XML that does not parse                              -> xml_error
+#   - nodes the factory has no builder for                 -> missing_behaviors
+#   - ports named on a node that the node does not declare -> unknown_ports
+#   - port values that cannot be parsed as the port's type -> invalid_port_values
 string xml
 ---
 bool valid
@@ -13,4 +14,9 @@ string xml_error
 string[] missing_behaviors
 # Formatted as "NodeInstanceName.port_name" so the editor can highlight the offending field.
 string[] unknown_ports
+# Formatted as "NodeInstanceName.port_name: why". Worth checking separately because
+# BehaviorTree.CPP parses a port literal LAZILY, on the first getInput() -- so a malformed pose
+# written in the XML builds fine and only throws once the tree is running, potentially deep into a
+# motion. Catching it at edit time is the whole point.
+string[] invalid_port_values
 string[] tree_ids

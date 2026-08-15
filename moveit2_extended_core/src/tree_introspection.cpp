@@ -404,6 +404,81 @@ std::vector<std::string> referencedBehaviorsInXml(const std::string& xml)
   return out;
 }
 
+std::vector<std::string> invalidPortValuesInXml(const BtFactory& factory, const std::string& xml)
+{
+  std::vector<std::string> invalid;
+  tinyxml2::XMLDocument doc;
+  if (doc.Parse(xml.c_str()) != tinyxml2::XML_SUCCESS)
+  {
+    return invalid;
+  }
+
+  std::set<std::string> local_trees;
+  for (const auto& id : treeIdsInXml(xml))
+  {
+    local_trees.insert(id);
+  }
+
+  const auto& manifests = factory.manifests();
+  forEachNodeElement(doc, [&](const tinyxml2::XMLElement& element) {
+    const std::string id = registrationIdOf(element);
+    if (id.empty() || local_trees.count(id))
+    {
+      return;
+    }
+    const auto manifest = manifests.find(id);
+    if (manifest == manifests.end())
+    {
+      return;  // missingBehaviorsInXml reports this instead
+    }
+    const std::string instance = element.Attribute("name") ? element.Attribute("name") : id;
+
+    for (const auto* attr = element.FirstAttribute(); attr; attr = attr->Next())
+    {
+      const std::string key = attr->Name() ? attr->Name() : "";
+      const std::string value = attr->Value() ? attr->Value() : "";
+      if (key.empty() || kReservedAttributes.count(key))
+      {
+        continue;
+      }
+      const auto port = manifest->second.ports.find(key);
+      if (port == manifest->second.ports.end())
+      {
+        continue;  // unknownPortsInXml reports this instead
+      }
+      // "{key}" is a blackboard reference: its type is only known at run time, so there is nothing
+      // to parse here.
+      if (value.size() >= 2 && value.front() == '{' && value.back() == '}')
+      {
+        continue;
+      }
+      // An output port takes a destination key, not a value.
+      if (port->second.direction() == BT::PortDirection::OUTPUT)
+      {
+        continue;
+      }
+      // No registered converter means BehaviorTree.CPP would not parse it either; that is the
+      // blackboard-only case, and it is legitimate to leave such a port unwired.
+      if (!port->second.type())
+      {
+        continue;
+      }
+      try
+      {
+        port->second.parseString(value);
+      }
+      catch (const std::exception& exc)
+      {
+        invalid.push_back(instance + "." + key + ": " + exc.what());
+      }
+    }
+  });
+
+  std::sort(invalid.begin(), invalid.end());
+  invalid.erase(std::unique(invalid.begin(), invalid.end()), invalid.end());
+  return invalid;
+}
+
 std::vector<std::string> treeIdsInXml(const std::string& xml)
 {
   std::vector<std::string> ids;

@@ -1,0 +1,10 @@
+<library path="moveit2_extended_behaviors_plugin">
+  <class name="moveit2_extended::behaviors::GeneralBehaviorsLoader"
+         type="moveit2_extended::behaviors::GeneralBehaviorsLoader"
+         base_class_type="moveit2_extended::BehaviorLoaderBase">
+    <description>
+      The general-purpose Behaviors: motion through move_group, planning-scene edits, small value
+      utilities, and the operator-prompt Behaviors the Studio answers. Robot-independent.
+    </description>
+  </class>
+</library>

@@ -81,10 +81,11 @@ private:
   void onSaveObjectiveXml(const std::shared_ptr<moveit2_extended_msgs::srv::SaveObjectiveXml::Request> request,
                           std::shared_ptr<moveit2_extended_msgs::srv::SaveObjectiveXml::Response> response);
 
-  /** Run the three validation checks. Shared by ValidateObjectiveXml and SaveObjectiveXml so the
+  /** Run the four validation checks. Shared by ValidateObjectiveXml and SaveObjectiveXml so the
    *  two can never disagree about what is acceptable. */
   bool validateXml(const std::string& xml, std::string& xml_error, std::vector<std::string>& missing,
-                   std::vector<std::string>& unknown_ports, std::vector<std::string>& tree_ids) const;
+                   std::vector<std::string>& unknown_ports, std::vector<std::string>& invalid_values,
+                   std::vector<std::string>& tree_ids) const;
 
   /** Goal parameters -> blackboard, as strings. BehaviorTree.CPP converts a string entry to the
    *  port's declared type on read, so this needs no type registry. */

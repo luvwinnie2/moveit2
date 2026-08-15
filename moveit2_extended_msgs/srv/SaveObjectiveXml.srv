@@ -19,3 +19,4 @@ string backup_path
 string xml_error
 string[] missing_behaviors
 string[] unknown_ports
+string[] invalid_port_values
