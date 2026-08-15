@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>moveit2_extended_studio</name>
+  <version>0.1.0</version>
+  <description>
+    A browser UI for the Objective/Behavior layer: run and watch Objectives, answer the prompts
+    Behaviors block on, teach waypoints, change tools, and EDIT Behavior Trees.
+
+    Deliberately not built on rosbridge. The browser only ever needs this project's own services,
+    so a generic ROS bridge would be a much larger surface for no gain; a handful of JSON endpoints
+    backed by rclpy needs nothing beyond the Python standard library.
+  </description>
+  <maintainer email="cheesiang_leow@alps-lab.org">Leow Chee Siang</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>moveit2_extended_msgs</depend>
+  <depend>rcl_interfaces</depend>
+  <depend>ament_index_python</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

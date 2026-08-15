@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>moveit2-extended Studio</title>
+<link rel="stylesheet" href="/studio.css"/>
+</head>
+<body>
+
+<header>
+  <h1>moveit2-extended</h1>
+  <div id="status" class="status idle">IDLE</div>
+  <div id="current"></div>
+  <nav>
+    <button data-view="tree" class="active">Behavior Tree</button>
+    <button data-view="robot">Robot</button>
+  </nav>
+</header>
+
+<!-- The prompt strip is how a Behavior blocks on the operator. It is at the top and impossible to
+     miss on purpose: an Objective waiting for an answer nobody sees looks exactly like one that
+     has hung. -->
+<div id="prompt" class="prompt hidden">
+  <span id="prompt-message"></span>
+  <span id="prompt-buttons"></span>
+</div>
+
+<main>
+  <aside id="sidebar">
+    <section>
+      <h2>Objectives</h2>
+      <select id="objective-list" size="6"></select>
+      <div id="objective-description" class="muted"></div>
+      <label>Parameters <span class="muted">one per line, key=value</span></label>
+      <textarea id="objective-parameters" rows="3" spellcheck="false"></textarea>
+      <div class="row">
+        <button id="run">Run</button>
+        <button id="cancel" class="secondary">Cancel</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Tools</h2>
+      <div id="tools"></div>
+    </section>
+
+    <section>
+      <h2>Waypoints</h2>
+      <div id="waypoints" class="scroll"></div>
+      <div class="row">
+        <input id="waypoint-name" placeholder="name" spellcheck="false"/>
+        <button id="teach">Teach here</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Log</h2>
+      <div id="log" class="scroll mono"></div>
+    </section>
+  </aside>
+
+  <section id="view-tree" class="view">
+    <div class="toolbar">
+      <select id="edit-objective"></select>
+      <button id="load-objective" class="secondary">Load</button>
+      <span class="grow"></span>
+      <span id="edit-mode" class="muted">watching</span>
+      <button id="toggle-edit">Edit</button>
+      <button id="validate" class="secondary" disabled>Validate</button>
+      <button id="save" disabled>Save</button>
+    </div>
+
+    <div class="split">
+      <div id="palette" class="palette hidden">
+        <input id="palette-filter" placeholder="filter behaviors" spellcheck="false"/>
+        <div id="palette-list"></div>
+      </div>
+
+      <!-- ONE tree renderer for both jobs. While an Objective runs it is painted with live node
+           status; while stopped it is editable. Sharing the layout means what you edit is exactly
+           what you watch, in the same positions. -->
+      <div id="canvas-wrap">
+        <svg id="canvas"></svg>
+      </div>
+
+      <div id="inspector" class="inspector hidden">
+        <h3 id="inspector-title">nothing selected</h3>
+        <div id="inspector-ports"></div>
+        <div class="row">
+          <button id="delete-node" class="danger">Delete node</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="validation" class="validation"></div>
+  </section>
+
+  <section id="view-robot" class="view hidden">
+    <div class="placeholder">
+      <h2>3D view</h2>
+      <p>
+        Not built in. Point Rerun at the robot for the 3D half:
+        <code>ros2 run moveit2_extended_studio rerun_bridge</code>, then open the Rerun viewer.
+      </p>
+      <p class="muted">
+        RViz remains the other option and needs no extra install. This panel is deliberately empty
+        rather than showing a half-working viewport.
+      </p>
+    </div>
+  </section>
+</main>
+
+<script src="/studio.js"></script>
+</body>
+</html>
