@@ -7,6 +7,8 @@
 #include <moveit/trajectory_processing/time_optimal_trajectory_generation.h>
 #include <tf2_eigen/tf2_eigen.hpp>
 
+#include <algorithm>
+
 namespace moveit2_extended::behaviors
 {
 namespace
@@ -294,6 +296,31 @@ BT::PortsList ExecuteTrajectory::providedPorts()
       BT::InputPort<moveit_msgs::msg::RobotTrajectory>("trajectory", "what to run"),
       BT::OutputPort<int>("error_code", "MoveItErrorCodes value"),
   });
+}
+
+std::optional<BtStatus> ExecuteTrajectory::shortCircuit()
+{
+  const auto trajectory = getInput<moveit_msgs::msg::RobotTrajectory>("trajectory");
+  if (!trajectory)
+  {
+    return std::nullopt;  // createGoal() reports the port error properly.
+  }
+
+  // A single point is what the planner returns when the arm is already standing on the target --
+  // there is no motion to run and no time to parameterise. Refusing it (which the t=0 check below
+  // used to do) makes an Objective fail the second time it is run, having succeeded the first,
+  // which is about as confusing as a failure can be.
+  //
+  // An EMPTY trajectory is a different thing entirely -- it means nothing was planned -- so it is
+  // deliberately left to fall through to createGoal(), which fails it.
+  const size_t joint_points = trajectory->joint_trajectory.points.size();
+  const size_t multi_dof_points = trajectory->multi_dof_joint_trajectory.points.size();
+  if (std::max(joint_points, multi_dof_points) == 1)
+  {
+    RCLCPP_INFO(getLogger(), "already at the target: nothing to execute");
+    return BtStatus::SUCCESS;
+  }
+  return std::nullopt;
 }
 
 BtExpected<ExecuteTrajectory::Goal> ExecuteTrajectory::createGoal()

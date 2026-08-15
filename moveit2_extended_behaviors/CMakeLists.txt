@@ -111,6 +111,12 @@ if(BUILD_TESTING)
     ament_target_dependencies(test_port_conversions ${THIS_PACKAGE_DEPS})
   endif()
 
+  ament_add_gtest(test_execute_trajectory_noop test/test_execute_trajectory_noop.cpp)
+  if(TARGET test_execute_trajectory_noop)
+    target_link_libraries(test_execute_trajectory_noop ${PROJECT_NAME})
+    ament_target_dependencies(test_execute_trajectory_noop ${THIS_PACKAGE_DEPS})
+  endif()
+
   ament_add_gtest(test_moveit_goal_helpers test/test_moveit_goal_helpers.cpp)
   if(TARGET test_moveit_goal_helpers)
     target_link_libraries(test_moveit_goal_helpers ${PROJECT_NAME})

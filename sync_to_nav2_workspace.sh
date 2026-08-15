@@ -29,6 +29,7 @@ PACKAGES=(
   moveit2_extended_waypoints
   moveit2_extended_tools
   moveit2_extended_studio
+  moveit2_extended_rviz
 )
 
 if [[ ! -d "$DEST" ]]; then

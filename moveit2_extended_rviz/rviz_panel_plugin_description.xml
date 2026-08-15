@@ -1,0 +1,11 @@
+<library path="moveit2_extended_rviz_panel">
+  <class name="moveit2_extended/ObjectivesPanel"
+         type="moveit2_extended::rviz_plugin::ObjectivesPanel"
+         base_class_type="rviz_common::Panel">
+    <description>
+      Run and watch Objectives from inside RViz: pick one, fill in its parameters, run it, follow
+      the Behavior Tree as it ticks, and answer the operator prompts a Behavior raises. Also teaches
+      arm waypoints from the current pose and changes the end-effector.
+    </description>
+  </class>
+</library>

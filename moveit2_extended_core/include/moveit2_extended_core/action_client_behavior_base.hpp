@@ -56,6 +56,18 @@ public:
   }
 
 protected:
+  /** Optional. Answer the whole Behavior without contacting the server at all.
+   *
+   *  For the case where the work is already done: asking an arm already standing on its target to
+   *  move there produces a one-point trajectory, and treating that as an error makes a
+   *  perfectly-fine Objective fail on its second run. Returning a status here also skips the
+   *  action-server wait, which is the right thing when no goal is going to be sent. Runs on the
+   *  tick thread, before anything else in onStart(). */
+  virtual std::optional<BtStatus> shortCircuit()
+  {
+    return std::nullopt;
+  }
+
   /** Build the goal from ports and configuration. Return an error to fail without contacting the
    *  server at all. Runs on the tick thread. */
   virtual BtExpected<Goal> createGoal() = 0;
@@ -76,6 +88,13 @@ protected:
 private:
   BtStatus onStart() override
   {
+    // Before the server wait, so "there is nothing to do" does not pay a 3 s timeout to discover
+    // a server it was never going to talk to.
+    if (const auto answer = shortCircuit())
+    {
+      return *answer;
+    }
+
     action_name_ = getInputOr<std::string>("action_name", "");
     if (action_name_.empty())
     {

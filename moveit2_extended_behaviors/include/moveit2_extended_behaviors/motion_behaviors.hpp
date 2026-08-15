@@ -82,6 +82,8 @@ public:
   static BT::PortsList providedPorts();
 
 protected:
+  /** SUCCESS, without contacting move_group, when there is nothing to run. */
+  std::optional<BtStatus> shortCircuit() override;
   BtExpected<Goal> createGoal() override;
   BtStatus processResult(const WrappedResult& result) override;
 };

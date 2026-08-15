@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>moveit2_extended_rviz</name>
+  <version>0.1.0</version>
+  <description>
+    RViz panel for running and watching Objectives.
+
+    Deliberately the same controls as the web Studio -- pick an Objective, fill in its parameters,
+    run it, watch the tree light up, answer it when a Behavior stops to ask something -- so that
+    anyone who already has RViz open for the robot does not have to open a browser as well.
+
+    Depends only on moveit2_extended_msgs, not on the core library: the panel reads the server over
+    ROS interfaces, so it does not drag BehaviorTree.CPP, pluginlib loaders or MoveIt into the RViz
+    process.
+  </description>
+  <maintainer email="cheesiang_leow@alps-lab.org">Leow Chee Siang</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>moveit2_extended_msgs</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
+  <depend>rviz_common</depend>
+  <depend>pluginlib</depend>
+  <depend>rcl_interfaces</depend>
+  <depend>qtbase5-dev</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <rviz plugin="${prefix}/rviz_panel_plugin_description.xml"/>
+  </export>
+</package>
