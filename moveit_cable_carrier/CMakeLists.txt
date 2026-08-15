@@ -50,6 +50,7 @@ add_library(${PROJECT_NAME} SHARED
   src/carrier_attacher.cpp
   src/carrier_registry.cpp
   src/collision_env_carrier.cpp
+  src/trajectory_analysis.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -147,6 +148,12 @@ if(BUILD_TESTING)
   if(TARGET test_rod_solver)
     target_link_libraries(test_rod_solver ${PROJECT_NAME} Eigen3::Eigen)
     ament_target_dependencies(test_rod_solver ${THIS_PACKAGE_DEPS})
+  endif()
+
+  ament_add_gtest(test_trajectory_analysis test/test_trajectory_analysis.cpp)
+  if(TARGET test_trajectory_analysis)
+    target_link_libraries(test_trajectory_analysis ${PROJECT_NAME} Eigen3::Eigen)
+    ament_target_dependencies(test_trajectory_analysis ${THIS_PACKAGE_DEPS})
   endif()
 endif()
 
