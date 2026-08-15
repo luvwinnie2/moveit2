@@ -29,6 +29,14 @@ void AsyncBehaviorBase::notifyDone()
 BtStatus AsyncBehaviorBase::onStart()
 {
   cancel_requested_.store(false, std::memory_order_release);
+
+  // Everything that needs the blackboard, the robot model or the planning scene happens here, on
+  // the tick thread, before any worker exists to race with it.
+  if (!prepare())
+  {
+    return BtStatus::FAILURE;
+  }
+
   future_ = std::async(std::launch::async, [this]() {
     try
     {

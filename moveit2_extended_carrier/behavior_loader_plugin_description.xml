@@ -1,0 +1,9 @@
+<library path="moveit2_extended_carrier_plugin">
+  <class name="moveit2_extended::carrier::CarrierBehaviorsLoader"
+         type="moveit2_extended::carrier::CarrierBehaviorsLoader"
+         base_class_type="moveit2_extended::BehaviorLoaderBase">
+    <description>
+      Behaviors that judge whether a deformable cable carrier (dresspack) survives a motion.
+    </description>
+  </class>
+</library>

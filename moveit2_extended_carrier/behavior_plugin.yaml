@@ -1,0 +1,5 @@
+# Found by the Objective server through the ament index. Installing this package is all it takes
+# for the carrier Behaviors to appear; not installing it is all it takes for them not to.
+behavior_loader_plugins:
+  moveit2_extended_carrier:
+    - moveit2_extended::carrier::CarrierBehaviorsLoader

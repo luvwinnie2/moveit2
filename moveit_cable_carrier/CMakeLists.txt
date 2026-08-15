@@ -106,8 +106,17 @@ target_compile_definitions(moveit_cable_carrier_rviz_panel PRIVATE QT_NO_KEYWORD
 # ---------------------------------------------------------------------------
 # install
 # ---------------------------------------------------------------------------
-install(TARGETS ${PROJECT_NAME} moveit_collision_detector_carrier_plugin moveit_cable_carrier_rviz_panel
+install(TARGETS ${PROJECT_NAME} moveit_collision_detector_carrier_plugin
   EXPORT export_${PROJECT_NAME}
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
+)
+# The RViz panel is deliberately NOT in the export set. It is a pluginlib plugin, loaded at run
+# time and linked by nobody -- but putting it in the export set makes its Qt5 and rviz_common link
+# requirements part of this package's imported targets, so every downstream package that merely
+# wants the carrier model is forced to find_package(Qt5) as well.
+install(TARGETS moveit_cable_carrier_rviz_panel
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin

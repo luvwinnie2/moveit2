@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>moveit2_extended_carrier</name>
+  <version>0.1.0</version>
+  <description>
+    Behaviors that judge a motion against a deformable cable carrier (ザイルベア / dresspack).
+
+    Kept apart from the general Behaviors because it links moveit_cable_carrier, Eigen and
+    yaml-cpp: a robot without a dresspack should not pay for any of that, and simply not
+    installing this package is enough to leave these Behaviors out.
+  </description>
+  <maintainer email="cheesiang_leow@alps-lab.org">Leow Chee Siang</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>moveit2_extended_core</depend>
+  <depend>moveit2_extended_msgs</depend>
+  <depend>moveit_cable_carrier</depend>
+  <depend>behaviortree_cpp_v3</depend>
+  <depend>rclcpp</depend>
+  <depend>pluginlib</depend>
+  <depend>moveit_core</depend>
+  <depend>moveit_ros_planning</depend>
+  <depend>moveit_msgs</depend>
+  <depend>eigen</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <moveit2_extended_core plugin="${prefix}/behavior_loader_plugin_description.xml"/>
+  </export>
+</package>

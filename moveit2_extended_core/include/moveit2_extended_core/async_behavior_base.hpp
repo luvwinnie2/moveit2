@@ -36,6 +36,17 @@ public:
   }
 
 protected:
+  /** Gather everything the work needs, on the TICK thread, before the worker starts.
+   *
+   *  This is where anything that touches the blackboard, the robot model or the planning scene
+   *  belongs -- doWork() may touch none of them. Return false to fail the Behavior immediately
+   *  without launching a worker; log the reason yourself, since only the caller knows what went
+   *  wrong. */
+  virtual bool prepare()
+  {
+    return true;
+  }
+
   /** The work. Runs once, on a worker thread. */
   virtual BtStatus doWork() = 0;
 
@@ -47,6 +58,12 @@ protected:
   bool cancelRequested() const
   {
     return cancel_requested_.load(std::memory_order_acquire);
+  }
+
+  /** For handing cancellation to a long-running library call that polls a flag of its own. */
+  const std::atomic_bool& cancelFlag() const
+  {
+    return cancel_requested_;
   }
 
   /** Call from doWork() when it finishes early, so the tree's sleep is cut short instead of

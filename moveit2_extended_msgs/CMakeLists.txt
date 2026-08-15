@@ -6,6 +6,7 @@ find_package(rosidl_default_generators REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 find_package(action_msgs REQUIRED)
 find_package(rcl_interfaces REQUIRED)
+find_package(std_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/BehaviorStatus.msg"
@@ -19,6 +20,11 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/UserPrompt.msg"
   "msg/UserResponse.msg"
 
+  "msg/CarrierDiagnostics.msg"
+  "msg/CarrierWaypointResult.msg"
+  "msg/CarrierSegmentFatigue.msg"
+  "msg/CarrierTrajectoryReport.msg"
+
   "srv/ListObjectives.srv"
   "srv/GetObjective.srv"
   "srv/ListBehaviors.srv"
@@ -28,7 +34,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 
   "action/ExecuteObjective.action"
 
-  DEPENDENCIES builtin_interfaces action_msgs rcl_interfaces
+  DEPENDENCIES builtin_interfaces action_msgs rcl_interfaces std_msgs
 )
 
 if(BUILD_TESTING)
