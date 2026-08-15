@@ -146,16 +146,39 @@ const check = (name, fn) => {
   }
 };
 
-const objectivesDir = process.argv[2] ||
-  join(here, '..', '..', '..', 'nav2_workspace', 'src', 'crx5ia_objectives', 'objectives');
+// The site Objectives are not in this package -- they are robot-specific and live in the
+// workspace. This package sits in two places (the fork, and rsync'd into the workspace's src/),
+// so rather than one relative path that is only right in one of them, try both and say which was
+// used. argv[2] overrides.
+const candidates = process.argv[2] ? [process.argv[2]] : [
+  // rsync'd into the workspace, alongside crx5ia_objectives
+  join(here, '..', '..', 'crx5ia_objectives', 'objectives'),
+  // installed by colcon
+  join(here, '..', '..', '..', 'install', 'crx5ia_objectives', 'share', 'crx5ia_objectives', 'objectives'),
+  // the fork, checked out next to the workspace
+  join(here, '..', '..', '..', 'nav2_workspace', 'src', 'crx5ia_objectives', 'objectives'),
+];
 
-console.log(`\nediting round trip, against ${objectivesDir}\n`);
-
+let objectivesDir = null;
 let files = [];
-try {
-  files = readdirSync(objectivesDir).filter((f) => f.endsWith('.xml'));
-} catch {
-  console.log(`  SKIP  cannot read ${objectivesDir}; pass the directory as argv[2]`);
+for (const candidate of candidates) {
+  try {
+    const found = readdirSync(candidate).filter((f) => f.endsWith('.xml'));
+    if (found.length) {
+      objectivesDir = candidate;
+      files = found;
+      break;
+    }
+  } catch {
+    // try the next one
+  }
+}
+
+console.log(`\nediting round trip, against ${objectivesDir ?? '(not found)'}\n`);
+
+if (objectivesDir === null) {
+  console.log(`  SKIP  no objectives found in:\n         ${candidates.join('\n         ')}`);
+  console.log('        pass the directory as argv[2]');
   process.exit(0);
 }
 assert.ok(files.length, 'no objectives found');

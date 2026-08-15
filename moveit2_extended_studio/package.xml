@@ -18,6 +18,15 @@
   <depend>rcl_interfaces</depend>
   <depend>ament_index_python</depend>
 
+  <!-- rerun_bridge only. It is an observer: nothing else in the project needs these, and the node
+       is not started by studio.launch.py. rerun-sdk itself is a pip install (there is no rosdep
+       key for it) and the bridge is the only thing that imports it. -->
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>tf2_msgs</depend>
+  <depend>visualization_msgs</depend>
+
   <test_depend>ament_copyright</test_depend>
   <test_depend>python3-pytest</test_depend>
 

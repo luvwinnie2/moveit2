@@ -100,12 +100,22 @@
     <div class="placeholder">
       <h2>3D view</h2>
       <p>
-        Not built in. Point Rerun at the robot for the 3D half:
-        <code>ros2 run moveit2_extended_studio rerun_bridge</code>, then open the Rerun viewer.
+        Served by Rerun, in its own tab rather than embedded here. Start it with
+        <code>ros2 run moveit2_extended_studio rerun_bridge</code> and open
+        <code>http://&lt;robot&gt;:9090</code>.
+      </p>
+      <p>
+        It logs the arm, the dresspack shape, and — the reason for using Rerun rather than
+        another viewport here — bend utilisation, twist and cable strain as time series on the
+        same timeline as the 3D scene. Dragging the timeline shows the pose at the moment the
+        carrier got tight, which is the question this stack exists to answer.
       </p>
       <p class="muted">
-        RViz remains the other option and needs no extra install. This panel is deliberately empty
-        rather than showing a half-working viewport.
+        Not embedded in an iframe on purpose: the viewer wants the whole window, and two
+        scroll/zoom surfaces fighting each other is worse than a second tab. RViz remains the
+        other option and needs no pip install —
+        <code>crx5ia_objectives/config/objectives.rviz</code> has the same panel controls as this
+        page.
       </p>
     </div>
   </section>

@@ -23,6 +23,7 @@ setup(
     entry_points={
         "console_scripts": [
             "studio_server = moveit2_extended_studio.studio_server:main",
+            "rerun_bridge = moveit2_extended_studio.rerun_bridge:main",
         ],
     },
 )
