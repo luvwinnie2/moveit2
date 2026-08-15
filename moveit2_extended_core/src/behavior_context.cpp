@@ -26,8 +26,29 @@ BehaviorContext::BehaviorContext(rclcpp::Node::SharedPtr node, BehaviorContextCo
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, node_);
 
   // Created up front but never added to an executor: MoveGroupInterface spins it itself.
-  moveit_client_node_ = rclcpp::Node::make_shared(std::string(node_->get_name()) + "_moveit_client",
-                                                  node_->get_namespace());
+  //
+  // The name has to be pinned with node-scoped arguments rather than just handed to the
+  // constructor. A launch file that says name='objective_server' emits a *global*
+  // `-r __node:=objective_server` remap, and a global remap with no node prefix renames EVERY
+  // node in the process -- this one included. The result is two nodes in one process both called
+  // /objective_server, which is not merely untidy: both then serve
+  // /objective_server/get_parameters and friends, so `ros2 param` gets whichever answers first.
+  // Arguments passed here are node-specific and are applied after the global ones, so this remap
+  // wins. Same trick as PlanningSceneMonitor's private node
+  // (moveit_ros/planning/planning_scene_monitor/src/planning_scene_monitor.cpp:112-119).
+  const std::string client_name = std::string(node_->get_name()) + "_moveit_client";
+  moveit_client_node_ = rclcpp::Node::make_shared(
+      "_", node_->get_namespace(),
+      rclcpp::NodeOptions().arguments({ "--ros-args", "-r", "__node:=" + client_name }));
+
+  // Global arguments still apply, but a params file keyed by the server's node name cannot match
+  // the renamed client, so sim time has to be carried across by hand. Getting this wrong means
+  // MoveGroupInterface stamps trajectories with wall time while everything else runs on /clock.
+  if (node_->has_parameter("use_sim_time"))
+  {
+    moveit_client_node_->set_parameter(
+        rclcpp::Parameter("use_sim_time", node_->get_parameter("use_sim_time").as_bool()));
+  }
 }
 
 BehaviorContext::~BehaviorContext() = default;

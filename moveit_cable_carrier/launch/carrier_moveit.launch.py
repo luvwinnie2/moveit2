@@ -137,10 +137,13 @@ def _setup(context, *args, **kwargs):
             output="screen",
             condition=IfCondition(LaunchConfiguration("static_joint_source")),
         ),
+        # No name= on purpose -- see the same note in crx5ia_objectives/launch/studio.launch.py.
+        # A global `-r __node:=move_group` remap also renames the unscoped
+        # "moveit_simple_controller_manager" node that TrajectoryExecutionManager creates, so two
+        # nodes end up answering as /move_group.
         Node(
             package="moveit_ros_move_group",
             executable="move_group",
-            name="move_group",
             output="screen",
             parameters=move_group_params,
             additional_env=carrier_env,
