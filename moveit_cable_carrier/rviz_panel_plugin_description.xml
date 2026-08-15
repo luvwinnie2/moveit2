@@ -1,0 +1,11 @@
+<library path="moveit_cable_carrier_rviz_panel">
+  <class name="moveit_cable_carrier/CarrierPanel"
+         type="moveit_cable_carrier::CarrierPanel"
+         base_class_type="rviz_common::Panel">
+    <description>
+      Try cable-carrier settings against the live robot pose: edit length, bend radius, torsion
+      stop, safety margin and the cable routed inside, and see the re-solved shape and the
+      resulting bend-radius verdict immediately.
+    </description>
+  </class>
+</library>

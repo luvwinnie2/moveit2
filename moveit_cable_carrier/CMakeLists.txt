@@ -21,6 +21,11 @@ find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(urdf REQUIRED)
 find_package(srdfdom REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(moveit_msgs REQUIRED)
+find_package(rviz_common REQUIRED)
+find_package(Qt5 REQUIRED COMPONENTS Widgets)
+set(CMAKE_AUTOMOC ON)
 
 set(THIS_PACKAGE_DEPS
   moveit_core
@@ -33,6 +38,8 @@ set(THIS_PACKAGE_DEPS
   sensor_msgs
   urdf
   srdfdom
+  std_msgs
+  moveit_msgs
 )
 
 # ---------------------------------------------------------------------------
@@ -80,9 +87,25 @@ ament_target_dependencies(carrier_visualizer ${THIS_PACKAGE_DEPS})
 target_link_libraries(carrier_visualizer ${PROJECT_NAME} Eigen3::Eigen)
 
 # ---------------------------------------------------------------------------
+# RViz panel
+# ---------------------------------------------------------------------------
+add_library(moveit_cable_carrier_rviz_panel SHARED
+  src/rviz/carrier_panel.cpp
+  include/moveit_cable_carrier/carrier_panel.hpp   # listed so AUTOMOC sees the Q_OBJECT
+)
+target_include_directories(moveit_cable_carrier_rviz_panel PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(moveit_cable_carrier_rviz_panel
+  rclcpp rviz_common pluginlib std_msgs)
+target_link_libraries(moveit_cable_carrier_rviz_panel Qt5::Widgets)
+target_compile_definitions(moveit_cable_carrier_rviz_panel PRIVATE QT_NO_KEYWORDS)
+
+# ---------------------------------------------------------------------------
 # install
 # ---------------------------------------------------------------------------
-install(TARGETS ${PROJECT_NAME} moveit_collision_detector_carrier_plugin
+install(TARGETS ${PROJECT_NAME} moveit_collision_detector_carrier_plugin moveit_cable_carrier_rviz_panel
   EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
@@ -100,11 +123,14 @@ install(PROGRAMS
   DESTINATION lib/${PROJECT_NAME}
 )
 install(FILES README.ja.md DESTINATION share/${PROJECT_NAME})
-install(FILES collision_detector_carrier_plugin_description.xml
+install(FILES
+  collision_detector_carrier_plugin_description.xml
+  rviz_panel_plugin_description.xml
   DESTINATION share/${PROJECT_NAME}
 )
 
 pluginlib_export_plugin_description_file(moveit_core collision_detector_carrier_plugin_description.xml)
+pluginlib_export_plugin_description_file(rviz_common rviz_panel_plugin_description.xml)
 
 ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME})

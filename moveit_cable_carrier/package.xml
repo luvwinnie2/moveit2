@@ -28,6 +28,10 @@
   <depend>sensor_msgs</depend>
   <depend>urdf</depend>
   <depend>srdfdom</depend>
+  <depend>std_msgs</depend>
+  <depend>moveit_msgs</depend>
+  <depend>rviz_common</depend>
+  <depend>qtbase5-dev</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>ament_lint_auto</test_depend>
@@ -35,5 +39,6 @@
   <export>
     <build_type>ament_cmake</build_type>
     <moveit_core plugin="${prefix}/collision_detector_carrier_plugin_description.xml"/>
+    <rviz_common plugin="${prefix}/rviz_panel_plugin_description.xml"/>
   </export>
 </package>
