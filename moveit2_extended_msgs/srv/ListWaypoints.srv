@@ -1,0 +1,5 @@
+string tag_filter               # empty returns everything
+---
+bool success
+string message
+ArmWaypoint[] waypoints

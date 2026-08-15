@@ -1,0 +1,20 @@
+# Teach a waypoint, usually from the robot's current state.
+uint8 CAPTURE_CURRENT_JOINTS=0
+uint8 CAPTURE_CURRENT_POSE=1
+uint8 CAPTURE_CURRENT_BOTH=2
+uint8 CAPTURE_GIVEN=3
+
+string name
+string group                    # empty uses the manager's default
+string description
+string[] tags
+uint8 capture
+sensor_msgs/JointState joint_state      # used only with CAPTURE_GIVEN
+geometry_msgs/PoseStamped pose          # used only with CAPTURE_GIVEN
+string pose_link                # empty uses the manager's default
+bool overwrite
+bool record_carrier_diagnostics
+---
+bool success
+string message
+ArmWaypoint waypoint

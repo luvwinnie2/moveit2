@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>moveit2_extended_tools</name>
+  <version>0.1.0</version>
+  <description>
+    Changing the end-effector at run time.
+
+    A tool is an attached collision object on the mount link plus a TCP offset, because MoveIt
+    cannot change a robot description while it is running and restarting move_group to swap a
+    gripper is an outage, not a tool change.
+  </description>
+  <maintainer email="cheesiang_leow@alps-lab.org">Leow Chee Siang</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>moveit2_extended_core</depend>
+  <depend>moveit2_extended_msgs</depend>
+  <depend>behaviortree_cpp_v3</depend>
+  <depend>rclcpp</depend>
+  <depend>pluginlib</depend>
+  <depend>moveit_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>shape_msgs</depend>
+  <depend>tf2</depend>
+  <depend>yaml-cpp</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <moveit2_extended_core plugin="${prefix}/behavior_loader_plugin_description.xml"/>
+  </export>
+</package>

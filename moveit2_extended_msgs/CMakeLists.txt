@@ -7,6 +7,8 @@ find_package(builtin_interfaces REQUIRED)
 find_package(action_msgs REQUIRED)
 find_package(rcl_interfaces REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/BehaviorStatus.msg"
@@ -25,6 +27,9 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/CarrierSegmentFatigue.msg"
   "msg/CarrierTrajectoryReport.msg"
 
+  "msg/ArmWaypoint.msg"
+  "msg/ToolInfo.msg"
+
   "srv/ListObjectives.srv"
   "srv/GetObjective.srv"
   "srv/ListBehaviors.srv"
@@ -32,9 +37,19 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/ValidateObjectiveXml.srv"
   "srv/SaveObjectiveXml.srv"
 
+  "srv/SaveWaypoint.srv"
+  "srv/ListWaypoints.srv"
+  "srv/GetWaypoint.srv"
+  "srv/DeleteWaypoint.srv"
+  "srv/RenameWaypoint.srv"
+
+  "srv/SwitchTool.srv"
+  "srv/ListTools.srv"
+  "srv/GetActiveTool.srv"
+
   "action/ExecuteObjective.action"
 
-  DEPENDENCIES builtin_interfaces action_msgs rcl_interfaces std_msgs
+  DEPENDENCIES builtin_interfaces action_msgs rcl_interfaces std_msgs sensor_msgs geometry_msgs
 )
 
 if(BUILD_TESTING)

@@ -1,0 +1,104 @@
+# End-effectors the FANUC CRX-5iA can be fitted with.
+#
+# PROVENANCE, and why every entry carries one:
+#
+# The Isaac Sim gripper assets referenced below are thin USD wrappers that POINT AT geometry rather
+# than containing it, and neither container in this workspace has USD tooling installed, so no
+# convex hull has been extracted from them. The collision shapes here are therefore bounding
+# primitives from published Robotiq dimensions, not measured hulls -- and every one is deliberately
+# a little larger than the real part, because an over-sized collision volume keeps the planner
+# further away, which is the safe direction to be wrong in.
+#
+#   measured   taken off the real part or its CAD
+#   datasheet  from the manufacturer's published drawing
+#   estimate   inferred, and conservative
+#
+# To replace an entry with a real hull: open the USD in Isaac Sim, export the collision meshes, run
+# a convex decomposition, and switch that tool to mesh shapes. Until then the numbers here are
+# honest about what they are.
+
+mount_link: flange
+
+tools:
+  - name: cutter
+    description: >
+      The pruning cutter this robot normally carries. Its geometry is already in the URDF, so this
+      entry exists so that "fit the cutter again" after a tool change is expressible -- and so the
+      TCP offset has one definition.
+    provenance: measured        # from the FBX/CAD this workspace already builds the URDF from
+    mass: 0.35
+    # The cutting point sits 150 mm out and 28 mm up from the flange. This is the same offset the
+    # Cartesian Behaviors already have to compensate for, because crx_kinematics solves to flange.
+    tcp_offset:
+      xyz: [0.150, 0.0, 0.028]
+      rpy: [0.0, 0.0, 0.0]
+    allowed_collision_links: [flange, J6_link, J5_link]
+    carrier_config: package://moveit_cable_carrier/config/crx5ia_carrier.yaml
+    collision:
+      - type: box
+        dimensions: [0.170, 0.070, 0.070]
+        origin: { xyz: [0.085, 0.0, 0.014], rpy: [0.0, 0.0, 0.0] }
+
+  - name: robotiq_2f85
+    description: Robotiq 2F-85 parallel gripper, 85 mm stroke.
+    provenance: datasheet       # Robotiq published dimensions; NOT a hull off the Isaac asset
+    package_name: moveit2_extended_tools
+    urdf_file_path: ""          # reserved: no mesh extracted yet, see the note at the top
+    mass: 0.925
+    # Coupling face to finger tip. The gripper closes along its own Y, so the working point is on
+    # the axis, at the tip.
+    tcp_offset:
+      xyz: [0.150, 0.0, 0.0]
+      rpy: [0.0, 0.0, 0.0]
+    allowed_collision_links: [flange, J6_link]
+    carrier_config: package://moveit_cable_carrier/config/crx5ia_carrier.yaml
+    collision:
+      # Body, then the finger envelope. Two boxes rather than one, so the planner can still reach
+      # between the fingers rather than treating the whole gripper as solid.
+      - type: box
+        dimensions: [0.090, 0.085, 0.090]
+        origin: { xyz: [0.045, 0.0, 0.0], rpy: [0.0, 0.0, 0.0] }
+      - type: box
+        dimensions: [0.065, 0.105, 0.040]
+        origin: { xyz: [0.122, 0.0, 0.0], rpy: [0.0, 0.0, 0.0] }
+
+  - name: robotiq_2f140
+    description: >
+      Robotiq 2F-140 parallel gripper, 140 mm stroke. Heavier and longer than the 2F-85, which is
+      exactly why it is worth having in the registry: it should work the dresspack measurably
+      harder, and that difference is the evidence that tool choice reaches the carrier model at all.
+    provenance: datasheet
+    package_name: moveit2_extended_tools
+    urdf_file_path: ""
+    mass: 1.025
+    tcp_offset:
+      xyz: [0.163, 0.0, 0.0]
+      rpy: [0.0, 0.0, 0.0]
+    allowed_collision_links: [flange, J6_link]
+    carrier_config: package://moveit_cable_carrier/config/crx5ia_carrier.yaml
+    collision:
+      - type: box
+        dimensions: [0.095, 0.090, 0.095]
+        origin: { xyz: [0.048, 0.0, 0.0], rpy: [0.0, 0.0, 0.0] }
+      - type: box
+        dimensions: [0.075, 0.160, 0.050]
+        origin: { xyz: [0.133, 0.0, 0.0], rpy: [0.0, 0.0, 0.0] }
+
+  - name: robotiq_hande
+    description: Robotiq Hand-E parallel gripper, 50 mm stroke, compact.
+    provenance: datasheet
+    package_name: moveit2_extended_tools
+    urdf_file_path: ""
+    mass: 1.0
+    tcp_offset:
+      xyz: [0.160, 0.0, 0.0]
+      rpy: [0.0, 0.0, 0.0]
+    allowed_collision_links: [flange, J6_link]
+    carrier_config: package://moveit_cable_carrier/config/crx5ia_carrier.yaml
+    collision:
+      - type: cylinder
+        dimensions: [0.100, 0.038]     # length, radius
+        origin: { xyz: [0.050, 0.0, 0.0], rpy: [0.0, 1.5707963, 0.0] }
+      - type: box
+        dimensions: [0.060, 0.070, 0.040]
+        origin: { xyz: [0.130, 0.0, 0.0], rpy: [0.0, 0.0, 0.0] }

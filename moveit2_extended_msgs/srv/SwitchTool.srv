@@ -1,0 +1,11 @@
+# Fit a different end-effector.
+#
+# The tool is represented as an attached collision object on the mount link, not as a URDF edit:
+# MoveIt cannot change a robot description at run time, and restarting move_group to swap a gripper
+# is not a tool change, it is an outage.
+string name                     # empty detaches whatever is fitted and fits nothing
+bool detach_only
+---
+bool success
+string message
+ToolInfo active_tool

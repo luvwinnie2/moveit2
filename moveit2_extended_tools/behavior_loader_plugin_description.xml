@@ -1,0 +1,7 @@
+<library path="moveit2_extended_tools_plugin">
+  <class name="moveit2_extended::tools::ToolBehaviorsLoader"
+         type="moveit2_extended::tools::ToolBehaviorsLoader"
+         base_class_type="moveit2_extended::BehaviorLoaderBase">
+    <description>Behaviors for changing the end-effector at run time.</description>
+  </class>
+</library>

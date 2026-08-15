@@ -1,0 +1,7 @@
+<library path="moveit2_extended_waypoints_plugin">
+  <class name="moveit2_extended::waypoints::WaypointBehaviorsLoader"
+         type="moveit2_extended::waypoints::WaypointBehaviorsLoader"
+         base_class_type="moveit2_extended::BehaviorLoaderBase">
+    <description>Behaviors for reaching and teaching named arm targets.</description>
+  </class>
+</library>

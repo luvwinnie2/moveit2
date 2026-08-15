@@ -1,0 +1,6 @@
+string name
+string new_name
+bool overwrite
+---
+bool success
+string message

@@ -1,0 +1,3 @@
+behavior_loader_plugins:
+  moveit2_extended_tools:
+    - moveit2_extended::tools::ToolBehaviorsLoader
