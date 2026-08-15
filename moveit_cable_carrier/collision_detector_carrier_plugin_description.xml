@@ -1,0 +1,11 @@
+<library path="moveit_collision_detector_carrier_plugin">
+  <class name="moveit_cable_carrier/CABLE_CARRIER"
+         type="moveit_cable_carrier::CarrierCollisionPlugin"
+         base_class_type="collision_detection::CollisionPlugin">
+    <description>
+      FCL-backed collision detector that additionally models deformable cable carriers
+      (Silveyer / linkless cable chain) mounted across two robot links. The carrier shape is
+      re-solved for every queried robot state and injected as an attached body.
+    </description>
+  </class>
+</library>

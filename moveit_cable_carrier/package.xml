@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>moveit_cable_carrier</name>
+  <version>0.1.0</version>
+  <description>
+    Deformable cable-carrier (Silveyer / ザイルベア style linkless cable chain) collision
+    support for MoveIt 2. The carrier spans two robot links, so its shape is a function of
+    the joint configuration q. This package solves the carrier's quasi-static shape per
+    state and injects it into MoveIt's collision pipeline as recomputed attached bodies,
+    via a drop-in CollisionEnv/CollisionPlugin that wraps FCL.
+  </description>
+
+  <maintainer email="cheesiang_leow@alps-lab.org">Leow Chee Siang</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>moveit_core</depend>
+  <depend>moveit_ros_planning</depend>
+  <depend>geometric_shapes</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>eigen</depend>
+  <depend>yaml-cpp</depend>
+  <depend>visualization_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>urdf</depend>
+  <depend>srdfdom</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <moveit_core plugin="${prefix}/collision_detector_carrier_plugin_description.xml"/>
+  </export>
+</package>
