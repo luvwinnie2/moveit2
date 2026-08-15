@@ -14,10 +14,12 @@
 //   /display_planned_path  the whole planned motion, which is animated and, more usefully,
 //                          scanned for its worst case
 //
-// RViz does *not* publish the goal state while you drag the interactive marker -- the query state
-// lives inside the MotionPlanning display and never reaches the graph -- so live following during
-// a drag is not possible without patching that plugin. Planning is the trigger instead, which is
-// also the moment the answer actually matters.
+// Live following of MoveIt's end-effector marker works by subscribing to that marker's *feedback*
+// topic and solving IK here. RViz never publishes the query goal state itself -- it lives inside
+// the MotionPlanning display -- but the pose being dragged does go out as InteractiveMarkerFeedback,
+// which is enough to reconstruct the configuration. The IK is seeded from the previous preview so
+// the arm keeps the same branch while dragging instead of flipping elbow-up/elbow-down, which is
+// what RViz does internally too.
 //
 //   ros2 run moveit_cable_carrier carrier_visualizer --ros-args
 //        -p robot_description:="$(cat robot.urdf)" -p carrier_config:=<carrier.yaml>
@@ -27,8 +29,10 @@
 
 #include <moveit/robot_model/robot_model.h>
 #include <moveit/robot_state/robot_state.h>
+#include <moveit/robot_model_loader/robot_model_loader.h>
 #include <moveit_msgs/msg/display_trajectory.hpp>
 #include <moveit_msgs/msg/motion_plan_request.hpp>
+#include <visualization_msgs/msg/interactive_marker_feedback.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <srdfdom/model.h>
@@ -51,11 +55,26 @@ class CarrierVisualizer : public rclcpp::Node
 public:
   CarrierVisualizer() : rclcpp::Node("carrier_visualizer")
   {
-    const std::string urdf = declare_parameter<std::string>("robot_description", "");
-    const std::string srdf = declare_parameter<std::string>("robot_description_semantic", "");
-    const std::string config = declare_parameter<std::string>("carrier_config", "");
+    declare_parameter<std::string>("robot_description", "");
+    declare_parameter<std::string>("robot_description_semantic", "");
+    declare_parameter<std::string>("carrier_config", "");
+    declare_parameter<std::string>("planning_group", "arm");
+    declare_parameter<std::string>("marker_feedback_topic",
+                                   "/rviz_moveit_motion_planning_display/"
+                                   "robot_interaction_interactive_marker_topic/feedback");
+    declare_parameter<double>("ik_timeout", 0.02);
     frame_id_ = declare_parameter<std::string>("frame_id", "");
-    const double rate = declare_parameter<double>("rate", 20.0);
+    declare_parameter<double>("rate", 20.0);
+  }
+
+  /** Deferred because RobotModelLoader needs a shared_ptr to this node, which does not exist yet
+   *  inside the constructor. */
+  void init()
+  {
+    const std::string urdf = get_parameter("robot_description").as_string();
+    const std::string config = get_parameter("carrier_config").as_string();
+    const double rate = get_parameter("rate").as_double();
+    group_ = get_parameter("planning_group").as_string();
 
     if (urdf.empty() || config.empty())
     {
@@ -63,16 +82,34 @@ public:
       throw std::runtime_error("missing parameters");
     }
 
-    auto urdf_model = urdf::parseURDF(urdf);
-    if (!urdf_model)
+    // RobotModelLoader rather than a hand-built RobotModel: it also wires up the kinematics
+    // solvers declared in robot_description_kinematics, which is what setFromIK needs to follow
+    // the end-effector marker.
+    robot_model_loader::RobotModelLoader::Options opt;
+    opt.robot_description_ = "robot_description";
+    opt.load_kinematics_solvers_ = true;
+    loader_ = std::make_shared<robot_model_loader::RobotModelLoader>(shared_from_this(), opt);
+    model_ = loader_->getModel();
+    if (!model_)
     {
-      throw std::runtime_error("cannot parse robot_description");
+      throw std::runtime_error("RobotModelLoader could not build a robot model");
     }
-    auto srdf_model = std::make_shared<srdf::Model>();
-    srdf_model->initString(*urdf_model, srdf.empty() ? "<robot name='r'/>" : srdf);
-    model_ = std::make_shared<moveit::core::RobotModel>(urdf_model, srdf_model);
     state_ = std::make_shared<moveit::core::RobotState>(model_);
     state_->setToDefaultValues();
+
+    jmg_ = model_->hasJointModelGroup(group_) ? model_->getJointModelGroup(group_) : nullptr;
+    if (!jmg_)
+    {
+      RCLCPP_WARN(get_logger(), "planning group '%s' not found; marker following disabled",
+                  group_.c_str());
+    }
+    else if (!jmg_->getSolverInstance())
+    {
+      RCLCPP_WARN(get_logger(),
+                  "group '%s' has no IK solver (is robot_description_kinematics passed to this "
+                  "node?); marker following disabled",
+                  group_.c_str());
+    }
 
     std::string err;
     if (!moveit_cable_carrier::CarrierRegistry::instance().loadFromYaml(config, &err))
@@ -112,6 +149,11 @@ public:
 
     markers_ = create_publisher<visualization_msgs::msg::MarkerArray>("cable_carrier_markers", 1);
     status_ = create_publisher<std_msgs::msg::String>("cable_carrier_status", rclcpp::QoS(1).transient_local());
+    marker_fb_ = create_subscription<visualization_msgs::msg::InteractiveMarkerFeedback>(
+        get_parameter("marker_feedback_topic").as_string(), rclcpp::QoS(10),
+        [this](const visualization_msgs::msg::InteractiveMarkerFeedback::SharedPtr msg) {
+          onMarkerFeedback(*msg);
+        });
     plan_req_ = create_subscription<moveit_msgs::msg::MotionPlanRequest>(
         "motion_plan_request", 2,
         [this](const moveit_msgs::msg::MotionPlanRequest::SharedPtr msg) { onPlanRequest(*msg); });
@@ -214,6 +256,51 @@ private:
     }
     state_->update();
     have_state_ = true;
+  }
+
+  /** Follow MoveIt's end-effector marker while it is being dragged.
+   *
+   *  The feedback carries the pose of the dragged control, so IK gives back the configuration RViz
+   *  is showing as its goal state. Seeded from the last preview so the solution keeps the same
+   *  branch across a drag rather than snapping between elbow-up and elbow-down. */
+  void onMarkerFeedback(const visualization_msgs::msg::InteractiveMarkerFeedback& fb)
+  {
+    if (!jmg_ || !jmg_->getSolverInstance())
+    {
+      return;
+    }
+    if (fb.event_type != visualization_msgs::msg::InteractiveMarkerFeedback::POSE_UPDATE &&
+        fb.event_type != visualization_msgs::msg::InteractiveMarkerFeedback::MOUSE_UP)
+    {
+      return;
+    }
+
+    auto seed = std::make_shared<moveit::core::RobotState>(preview_state_ ? *preview_state_ : *state_);
+    Eigen::Isometry3d target = Eigen::Isometry3d::Identity();
+    target.translation() = Eigen::Vector3d(fb.pose.position.x, fb.pose.position.y, fb.pose.position.z);
+    target.linear() = Eigen::Quaterniond(fb.pose.orientation.w, fb.pose.orientation.x,
+                                         fb.pose.orientation.y, fb.pose.orientation.z)
+                          .normalized()
+                          .toRotationMatrix();
+
+    // The feedback pose is in the frame the marker was published in. Anything other than the model
+    // frame would need a TF lookup; report it rather than silently placing the carrier wrongly.
+    if (!fb.header.frame_id.empty() && fb.header.frame_id != model_->getModelFrame())
+    {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                           "marker feedback is in frame '%s' but the model frame is '%s'; "
+                           "not following", fb.header.frame_id.c_str(),
+                           model_->getModelFrame().c_str());
+      return;
+    }
+
+    if (seed->setFromIK(jmg_, target, get_parameter("ik_timeout").as_double()))
+    {
+      seed->update();
+      preview_state_ = seed;
+    }
+    // IK failure is normal while dragging past the reachable envelope: keep the last good preview
+    // instead of blanking the carrier.
   }
 
   /** RViz publishes the request when you press Plan. Joint goals carry the exact configuration the
@@ -379,6 +466,11 @@ private:
       }
     }
 
+    // Live follow of the end-effector marker.
+    if (preview_state_ && attachers_[active_index_])
+    {
+      appendCarrier(array, *preview_state_, active_index_, "_marker", 0.55f, id);
+    }
     // The pose the interactive marker was dragged to, shown once Plan is pressed.
     if (goal_state_ && attachers_[active_index_])
     {
@@ -444,6 +536,11 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joints_;
   rclcpp::Subscription<moveit_msgs::msg::MotionPlanRequest>::SharedPtr plan_req_;
   rclcpp::Subscription<moveit_msgs::msg::DisplayTrajectory>::SharedPtr plan_path_;
+  rclcpp::Subscription<visualization_msgs::msg::InteractiveMarkerFeedback>::SharedPtr marker_fb_;
+  robot_model_loader::RobotModelLoaderPtr loader_;
+  const moveit::core::JointModelGroup* jmg_ = nullptr;
+  std::string group_;
+  std::shared_ptr<moveit::core::RobotState> preview_state_;
   std::shared_ptr<moveit::core::RobotState> goal_state_;
   std::vector<std::vector<double>> plan_points_;
   std::vector<std::string> plan_joints_;
@@ -461,7 +558,9 @@ int main(int argc, char** argv)
   rclcpp::init(argc, argv);
   try
   {
-    rclcpp::spin(std::make_shared<CarrierVisualizer>());
+    auto node = std::make_shared<CarrierVisualizer>();
+    node->init();
+    rclcpp::spin(node);
   }
   catch (const std::exception& e)
   {

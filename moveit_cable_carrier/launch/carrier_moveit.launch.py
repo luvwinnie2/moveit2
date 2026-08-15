@@ -110,8 +110,13 @@ def _setup(context, *args, **kwargs):
                     "robot_description": robot_description_text,
                     "robot_description_semantic": robot_semantic_text,
                     "carrier_config": carrier_config,
+                    "planning_group": "arm",
                     "rate": 20.0,
-                }
+                },
+                # Needed for the IK that makes the carrier follow the end-effector marker while it
+                # is dragged. Without it the node logs that the group has no solver and simply
+                # stops following, rather than failing.
+                moveit_config.robot_description_kinematics,
             ],
         ),
         Node(
