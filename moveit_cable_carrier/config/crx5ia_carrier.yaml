@@ -84,7 +84,16 @@ carriers:
 
     # ザイルベアが正当に接触してよいリンク。MoveIt の AttachedBody::touch_links に
     # そのまま渡されるので、ACM を編集する必要はない。
+    #
+    # J1/J2 も入れる理由: ホーム姿勢（J2=J3=-60度）では腕が折り畳まれ、手首側の配線が
+    # 上腕に載る。実機ではただ触れているだけだが、本ソルバは障害物を見ずに最小エネルギー
+    # 形状を出すため、載った状態がわずかなめり込みとして現れる（実測 J2_link に 7.1 mm）。
+    # これを許可しないと、**ロボットが自分のホーム姿勢で invalid になり計画が始められない**。
+    # 配線が実際に沿って通るリンクは全て挙げること。
     touch_links:
+      - robot_base
+      - J1_link
+      - J2_link
       - J3_link
       - J4_link
       - J5_link
@@ -149,11 +158,13 @@ carriers:
       xyz: [0.0, -0.12, 0.02]
       rpy: [0.0, -1.5708, 0.0]
 
+    # 上腕側も同様に、配線が沿って通るリンクを全て挙げる。
     touch_links:
       - robot_base
       - J1_link
       - J2_link
       - J3_link
+      - J4_link
 
     inner_cables:
       - name: main_harness

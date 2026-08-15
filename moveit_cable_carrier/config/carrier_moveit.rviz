@@ -46,12 +46,16 @@ Visualization Manager:
         Query Goal State: true
         Query Start State: false
       Planned Path:
-        Loop Animation: true
+        # Looping replays the plan for ever after Execute, so the view never settles and the arm
+        # appears to keep moving on its own long after the motion finished.
+        Loop Animation: false
+        # The planned-path robot stays parked at the last waypoint once playback ends, which is a
+        # third robot on screen for no benefit -- the carrier sweep already shows the motion.
+        Show Robot Visual: false
+        Show Robot Collision: false
         Show Trail: false
         State Display Time: 0.05 s
         Trajectory Topic: /display_planned_path
-        Show Robot Visual: true
-        Show Robot Collision: false
       Scene Geometry:
         Scene Alpha: 0.9
         Show Scene Geometry: true
@@ -60,6 +64,11 @@ Visualization Manager:
         Show Robot Visual: true
         Show Robot Collision: false
         Robot Alpha: 0.5
+    # No separate preview-arm display on purpose. MoveIt already draws the queried pose as its
+    # orange Query Goal State ghost, and adding a second translucent arm for the same pose made
+    # three greyish robots overlap (scene robot, preview arm, planned-path robot) with no way to
+    # tell which was which. The preview carrier is solved from the same marker pose, so it sits on
+    # the orange ghost. /carrier_preview_state is still published if a separate display is wanted.
     - Class: rviz_default_plugins/MarkerArray
       Name: Cable carrier
       Enabled: true

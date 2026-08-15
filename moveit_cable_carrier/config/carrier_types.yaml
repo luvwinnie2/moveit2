@@ -92,6 +92,10 @@ types:
     outer_height: 0.010
     outer_width: 0.010
     bend_radius: 0.100
+    # 裸ケーブルは張力下でわずかに伸びる。チェーンと違い、ブラケット間距離が
+    # 公称長を少し超えた瞬間に「不可能」になるのは現実的でない。
+    max_strain: 0.02
+    axial_stiffness: 1.0e5
     twist_limit_per_link_deg: 30.0
     bend_mode: spatial
     unilateral: false
@@ -163,3 +167,39 @@ types:
         outer_diameter: 0.008
         min_bend_factor: 8.0
         count: 2
+
+# =============================================================================
+# 6. 国盛化学 サイルベア フレックス KSF-35-070（3次元動作対応）
+#    ミスミ品番 KSF-35-070-050 / -100 / -150 の末尾は曲げ半径 R[mm]。
+#    平面チェーンの KSL/KSH とは別系統で、スケルトン構造により
+#    3 次元動作に対応する。ロボット用途はこちら。
+# =============================================================================
+  - name: silveyer_flex_ksf35070_r50
+    kind: articulated_carrier
+    provenance: measured
+    note: >
+      確認できた仕様: 3 次元動作対応、1 モジュールあたり約 ±15 度のねじれ許容、
+      曲げ半径の選択肢 R50 / R100 / R150。品番末尾 -050 は R=50 mm。
+      **内寸 35 x 70 mm は品番の "35-070" からの推定**で、カタログ表を直接
+      確認したものではない（製品ページが 403 で取得できず）。外寸は樹脂肉厚を
+      見込んだ概算。発注前に必ずカタログで確認すること。
+    bend_radius: 0.050          # 品番末尾 -050
+    outer_height: 0.043         # 内寸 35 + 肉厚（推定）
+    outer_width: 0.080          # 内寸 70 + 肉厚（推定）
+    bend_mode: spatial          # 3 次元動作対応
+    unilateral: false
+    twist_limit_per_link_deg: 15.0   # 確認済み: 1 モジュール約 ±15 度
+    # チェーン構造は伸びないことが存在意義なので伸縮ゼロ
+    max_strain: 0.0
+
+  - name: silveyer_flex_ksf35070_r100
+    kind: articulated_carrier
+    provenance: measured
+    note: KSF-35-070-100。R=100 mm 版。その他は R50 版と同じ。
+    bend_radius: 0.100
+    outer_height: 0.043
+    outer_width: 0.080
+    bend_mode: spatial
+    unilateral: false
+    twist_limit_per_link_deg: 15.0
+    max_strain: 0.0

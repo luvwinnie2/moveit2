@@ -22,6 +22,7 @@ move_group の起動ログにも "CollisionEnvCarrier: N cable carrier(s) config
 """
 
 import os
+import xml.etree.ElementTree as ET
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -30,6 +31,28 @@ from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from moveit_configs_utils import MoveItConfigsBuilder
+
+
+ARM_JOINTS = ["J1", "J2", "J3", "J4", "J5", "J6"]
+
+
+def _named_pose(srdf_text, group, pose_name, joints):
+    """Resolve an SRDF group_state into joint values, in `joints` order.
+
+    Read from the SRDF rather than written out here so there is one definition of 'home'. The
+    zero pose is a singularity on this arm, which is exactly why the SRDF defines a separate home
+    in the first place, so starting there also keeps IK well behaved.
+    """
+    try:
+        root = ET.fromstring(srdf_text)
+    except ET.ParseError:
+        return None
+    for state in root.findall("group_state"):
+        if state.get("name") != pose_name or state.get("group") != group:
+            continue
+        values = {j.get("name"): float(j.get("value", 0.0)) for j in state.findall("joint")}
+        return [values.get(name, 0.0) for name in joints]
+    return None
 
 
 def _setup(context, *args, **kwargs):
@@ -48,6 +71,9 @@ def _setup(context, *args, **kwargs):
         .robot_description_kinematics(file_path="config/kinematics.yaml")
         .joint_limits(file_path="config/joint_limits.yaml")
         .planning_pipelines(pipelines=["ompl"])
+        # Needed for Execute to have somewhere to send the trajectory. Without it move_group can
+        # plan but never run the plan, so a carrier-aware path can only be looked at, not watched.
+        .trajectory_execution(file_path="config/moveit_controllers.yaml")
         .planning_scene_monitor(
             publish_robot_description=True,
             publish_robot_description_semantic=True,
@@ -70,6 +96,14 @@ def _setup(context, *args, **kwargs):
     robot_description_text = moveit_config.robot_description["robot_description"]
     robot_semantic_text = moveit_config.robot_description_semantic["robot_description_semantic"]
 
+    start_pose = LaunchConfiguration("start_pose").perform(context)
+    initial_positions = _named_pose(robot_semantic_text, "arm", start_pose, ARM_JOINTS)
+    if initial_positions is None:
+        raise RuntimeError(
+            f"SRDF has no group_state '{start_pose}' for group 'arm'. "
+            "Defined poses are whatever <group_state> entries the SRDF declares."
+        )
+
     nodes = [
         Node(
             package="robot_state_publisher",
@@ -85,9 +119,17 @@ def _setup(context, *args, **kwargs):
             output="screen",
             condition=IfCondition(LaunchConfiguration("gui")),
         ),
-        # Deliberately no joint_state_publisher when gui:=false. carrier_visualizer publishes
-        # /joint_states itself in drive_robot mode, and two publishers would fight: the slider set
-        # would keep resetting whatever the marker just solved for.
+        # Stands in for a controller so Execute actually runs the plan. It owns /joint_states, so
+        # joint_state_publisher must not run alongside it -- two publishers make the arm jitter
+        # between them. On the real robot or in Isaac, crx5ia_traj_bridge.py takes this role.
+        Node(
+            package="moveit_cable_carrier",
+            executable="demo_trajectory_executor.py",
+            name="demo_trajectory_executor",
+            output="screen",
+            condition=IfCondition(LaunchConfiguration("demo_executor")),
+            parameters=[{"joints": ARM_JOINTS, "initial_positions": initial_positions}],
+        ),
         Node(
             package="joint_state_publisher",
             executable="joint_state_publisher",
@@ -115,6 +157,7 @@ def _setup(context, *args, **kwargs):
                     "carrier_config": carrier_config,
                     "planning_group": "arm",
                     "rate": 20.0,
+                    "start_pose": start_pose,
                     "drive_robot": False,
                 },
                 # Needed for the IK that makes the carrier follow the end-effector marker while it
@@ -160,8 +203,15 @@ def generate_launch_description():
                 "gui", default_value="false",
                 description="関節スライダを出す。static_joint_source と排他"),
             DeclareLaunchArgument(
-                "static_joint_source", default_value="true",
-                description="joint_state_publisher を使う。マーカー追従（drive_robot）は未完成のため既定はこちら"),
+                "static_joint_source", default_value="false",
+                description="joint_state_publisher を使う。demo_executor と排他"),
+            DeclareLaunchArgument(
+                "start_pose", default_value="home",
+                description="起動時の姿勢。SRDF の group_state 名で指定する（home / zero / ready）"),
+            DeclareLaunchArgument(
+                "demo_executor", default_value="true",
+                description="Execute を効かせるための簡易実行ノード。実機/Isaac では false にして "
+                            "crx5ia_traj_bridge.py を使う"),
             DeclareLaunchArgument("rviz", default_value="true"),
             OpaqueFunction(function=_setup),
         ]

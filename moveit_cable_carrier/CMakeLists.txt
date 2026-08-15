@@ -120,6 +120,7 @@ install(PROGRAMS
   scripts/compare_reference.py
   scripts/generate_reference_shapes.py
   scripts/make_carrier_urdf.py
+  scripts/demo_trajectory_executor.py
   DESTINATION lib/${PROJECT_NAME}
 )
 install(FILES README.ja.md DESTINATION share/${PROJECT_NAME})

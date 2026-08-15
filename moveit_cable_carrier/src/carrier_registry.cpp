@@ -84,6 +84,10 @@ bool parseCarrierYaml(const std::string& yaml_text, std::vector<CarrierParams>& 
       assignIf(node, "bend_utilisation_warn", c.bend_utilisation_warn);
       assignIf(node, "relaxation", c.relaxation);
       assignIf(node, "energy_relaxation", c.energy_relaxation);
+      assignIf(node, "contact_stiffness", c.contact_stiffness);
+      assignIf(node, "contact_margin", c.contact_margin);
+      assignIf(node, "max_strain", c.max_strain);
+      assignIf(node, "axial_stiffness", c.axial_stiffness);
       assignIf(node, "twist_limit_per_link_deg", c.twist_limit_per_link);
       if (node["twist_limit_per_link_deg"])
       {

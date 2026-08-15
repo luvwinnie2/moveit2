@@ -10,6 +10,20 @@
 namespace moveit_cable_carrier
 {
 
+/** A capsule the carrier must not pass through.
+ *
+ *  Robot links are given to the solver as capsules because that is what the arm's collision
+ *  geometry already is (cylinders and a box), and a point-capsule distance is a few arithmetic
+ *  operations -- cheap enough to evaluate for every rod node on every solver iteration, which a
+ *  mesh query is not. */
+struct Obstacle
+{
+  Eigen::Vector3d a = Eigen::Vector3d::Zero();
+  Eigen::Vector3d b = Eigen::Vector3d::Zero();
+  double radius = 0.0;
+  std::string name;
+};
+
 /** Result of one quasi-static carrier shape solve: a polyline centreline in the planning frame. */
 struct CarrierShape
 {
@@ -58,6 +72,19 @@ struct CarrierShape
    *  inside is the quantity that governs conductor fatigue. */
   double max_cable_strain = 0.0;
 
+  /** Axial strain actually taken up, as a fraction of the nominal length. 0 for a run that is not
+   *  being pulled, which is the normal case; a chain should never leave 0. */
+  double axial_strain = 0.0;
+  /** Tension implied by that strain [N], = axial_stiffness * strain. This is the third of the three
+   *  loads a cable-simulation tool is expected to report, alongside bending and torsion. */
+  double tension = 0.0;
+
+  /** Deepest remaining penetration into an obstacle [m], and what it is against. A real carrier
+   *  rests on the arm rather than passing through it, so this should settle near zero; a value
+   *  that stays large means the run cannot get out of the way at this pose. */
+  double max_penetration = 0.0;
+  std::string penetrating_obstacle;
+
   /** True when every declared cable stays within its own minimum bend radius. */
   bool cablesWithinLimit() const
   {
@@ -98,6 +125,11 @@ public:
   /** Solve from a fresh Hermite initial guess. */
   CarrierShape solve(const Eigen::Isometry3d& base_bracket, const Eigen::Isometry3d& tip_bracket) const;
 
+  /** Capsules the carrier has to stay out of, in the planning frame. Set before solving; kept by
+   *  reference-free copy so a caller can rebuild them each state without invalidating the solver. */
+  void setObstacles(std::vector<Obstacle> obstacles) { obstacles_ = std::move(obstacles); }
+  const std::vector<Obstacle>& obstacles() const { return obstacles_; }
+
   /** Solve warm-started from `guess` (typically the previous state's shape). Falls back to a
    *  cold start when the guess has the wrong size or is far from admissible. */
   CarrierShape solve(const Eigen::Isometry3d& base_bracket, const Eigen::Isometry3d& tip_bracket,
@@ -136,6 +168,7 @@ private:
   double activeMaxTurnAngle() const { return activeSegmentLength() / params_.shapeBendRadius(); }
 
   CarrierParams params_;
+  std::vector<Obstacle> obstacles_;
   /** Set once per solve. Safe as mutable state because callers hold one solver per thread
    *  (CollisionEnvCarrier keeps its attachers thread_local). */
   mutable double active_length_ = 0.0;

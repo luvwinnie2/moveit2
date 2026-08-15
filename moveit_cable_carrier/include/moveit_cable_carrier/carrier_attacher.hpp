@@ -9,6 +9,7 @@
 #include <moveit/robot_state/robot_state.h>
 
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -44,6 +45,13 @@ public:
    *  `state` must already have up-to-date link transforms. */
   CarrierShape computeShape(const moveit::core::RobotState& state) const;
 
+  /** Capsule proxies for the robot's links at `state`, in the model frame.
+   *
+   *  Built from the link collision geometry, which on this arm is already cylinders and a box, so
+   *  the proxy is close to exact rather than a crude bound. Meshes fall back to their bounding
+   *  sphere, which is conservative -- the carrier keeps further away than it strictly must. */
+  std::vector<Obstacle> buildObstacles(const moveit::core::RobotState& state) const;
+
   /** Solve and attach to `state`. Returns false when the shape is infeasible -- callers should
    *  treat that as "this configuration is not usable", because an infeasible shape means the
    *  carrier would have to stretch or over-bend, which the hardware cannot do. */
@@ -56,12 +64,17 @@ public:
 private:
   CarrierParams params_;
   moveit::core::RobotModelConstPtr model_;
-  RodSolver solver_;
+  /** Mutable for the same reason as last_shape_: collision checking is logically const, but the
+   *  solver carries per-query state -- the obstacle set is rebuilt for every robot pose. */
+  mutable RodSolver solver_;
   std::string id_;
   bool valid_ = false;
   /** Warm start for the next solve. Mutable because collision checking is logically const.
    *  Not thread safe by itself -- CollisionEnvCarrier keeps one attacher per thread. */
   mutable CarrierShape last_shape_;
+  /** Links whose geometry is skipped: the two the brackets sit on, because the run legitimately
+   *  starts and ends against them and pushing off them would fight the anchors. */
+  std::set<std::string> skip_links_;
 };
 
 using CarrierAttacherPtr = std::shared_ptr<CarrierAttacher>;

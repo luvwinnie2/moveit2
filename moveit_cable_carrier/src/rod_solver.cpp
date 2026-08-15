@@ -179,6 +179,28 @@ inline Eigen::Vector3d logSO3(const Eigen::Matrix3d& rotation)
   return aa.axis() * aa.angle();
 }
 
+/** How far `p` is inside a capsule, and which way is out.
+ *
+ *  A point-capsule test is a handful of operations, which is why the robot's links are handed to
+ *  the solver as capsules: this runs for every rod node on every iteration. Returns 0 when clear. */
+inline double capsulePenetration(const Eigen::Vector3d& p, const Obstacle& o, double rod_radius,
+                                 double margin, Eigen::Vector3d& normal)
+{
+  const Eigen::Vector3d ab = o.b - o.a;
+  const double len2 = ab.squaredNorm();
+  const double t = len2 > 1e-12 ? std::clamp((p - o.a).dot(ab) / len2, 0.0, 1.0) : 0.0;
+  const Eigen::Vector3d closest = o.a + t * ab;
+  const Eigen::Vector3d d = p - closest;
+  const double dist = d.norm();
+  const double want = o.radius + rod_radius + margin;
+  if (dist >= want)
+  {
+    return 0.0;
+  }
+  normal = dist > 1e-9 ? Eigen::Vector3d(d / dist) : Eigen::Vector3d::UnitZ();
+  return want - dist;
+}
+
 inline Eigen::Matrix3d expSO3(const Eigen::Vector3d& w)
 {
   const double angle = w.norm();
@@ -192,9 +214,15 @@ inline Eigen::Matrix3d expSO3(const Eigen::Vector3d& w)
 
 double RodSolver::activeLength(double chord) const
 {
+  // Stretch first: a run pulled taut has to give before anything else is considered. Without this
+  // a chord a millimetre longer than the nominal length is reported as physically impossible,
+  // when the real part simply stretches and pulls on its brackets.
+  const double stretched = params_.length * (1.0 + std::max(0.0, params_.max_strain));
   if (params_.mount_style != MountStyle::Retraction)
   {
-    return params_.length;
+    // Only take up as much stretch as the chord actually demands; a slack run stays at its
+    // nominal length and carries no tension.
+    return std::clamp(chord * 1.02, params_.length, stretched);
   }
   // The unit keeps a controlled service loop and swallows the rest. Never let the free length fall
   // to the chord itself: a perfectly taut run has no admissible shape once the bracket tangents are
@@ -315,6 +343,8 @@ CarrierShape RodSolver::solve(const Eigen::Isometry3d& base_bracket, const Eigen
 
   // Must be set before the initial guess, which sizes itself to this length.
   active_length_ = activeLength(chord);
+  out.axial_strain = std::max(0.0, active_length_ / params_.length - 1.0);
+  out.tension = params_.axial_stiffness * out.axial_strain;
   const double seg_len = activeSegmentLength();
 
   // The unknowns are the joint rotations, not the node positions. That is the whole point of this
@@ -383,15 +413,60 @@ CarrierShape RodSolver::solve(const Eigen::Isometry3d& base_bracket, const Eigen
     // shape and gives the endpoint task the last word, which converges cleanly.
     const double anneal = 1.0 - static_cast<double>(it) / (0.6 * params_.max_iterations);
     const double gain = anneal > 0.0 ? params_.energy_relaxation * anneal : 0.0;
+
+    Eigen::VectorXd secondary(3 * std::max(1, n - 1));
+    secondary.setZero();
+    bool have_secondary = false;
+
     if (gain > 1e-6)
     {
-      Eigen::VectorXd secondary(3 * std::max(1, n - 1));
-      secondary.setZero();
       for (int i = 1; i < n; ++i)
       {
         const Eigen::Vector3d local = logSO3(rotations[static_cast<size_t>(i - 1)]);
         secondary.segment<3>(3 * (i - 1)) = -gain * (frames[i] * local);
       }
+      have_secondary = true;
+    }
+
+    // Contact. A real carrier lies *on* the arm; a solver that ignores obstacles drives it straight
+    // through, and that penetration then has to be waved away with touch_links, which also blinds
+    // the check to genuine interference. Push every penetrating node back out along the contact
+    // normal, mapped into joint space by the Jacobian transpose, and let the null-space projection
+    // stop it dragging the bracket off target.
+    //
+    // Not annealed, unlike the straightening term: a shape that stops resolving contact towards the
+    // end of the solve simply finishes back inside the link.
+    if (params_.contact_stiffness > 0.0 && !obstacles_.empty())
+    {
+      for (int k = 2; k < n - 1; ++k)
+      {
+        Eigen::Vector3d normal = Eigen::Vector3d::Zero();
+        double deepest = 0.0;
+        for (const auto& o : obstacles_)
+        {
+          Eigen::Vector3d nrm;
+          const double d = capsulePenetration(nodes[k], o, out.radius, params_.contact_margin, nrm);
+          if (d > deepest)
+          {
+            deepest = d;
+            normal = nrm;
+          }
+        }
+        if (deepest <= 0.0)
+        {
+          continue;
+        }
+        const Eigen::Vector3d push = params_.contact_stiffness * deepest * normal;
+        for (int i = 1; i < k; ++i)   // only joints upstream of a node can move it
+        {
+          secondary.segment<3>(3 * (i - 1)) += (nodes[k] - nodes[i]).cross(push);
+        }
+        have_secondary = true;
+      }
+    }
+
+    if (have_secondary)
+    {
       step += secondary - jacobian.transpose() * factorisation.solve(jacobian * secondary);
     }
 
@@ -467,9 +542,30 @@ CarrierShape RodSolver::solve(const Eigen::Isometry3d& base_bracket, const Eigen
     }
   }
 
+  // How far the centreline is inside a link's own solid. Deliberately measured without the rod's
+  // radius: including it means a run resting on a link always reports a "penetration" equal to its
+  // own radius, which reads as a failure when it is exactly the correct answer. Zero here means
+  // lying on the surface; a positive value means genuinely inside the link.
+  out.max_penetration = 0.0;
+  out.penetrating_obstacle.clear();
+  for (const auto& node : out.nodes)
+  {
+    for (const auto& o : obstacles_)
+    {
+      Eigen::Vector3d nrm;
+      const double d = capsulePenetration(node, o, 0.0, 0.0, nrm);
+      if (d > out.max_penetration)
+      {
+        out.max_penetration = d;
+        out.penetrating_obstacle = o.name;
+      }
+    }
+  }
+
   // Edge lengths and the bend limit hold by construction, so feasibility is exactly "did the far
   // bracket end up where the robot says it is".
-  out.feasible = (chord <= params_.length) && (out.endpoint_error < 50.0 * params_.tolerance) &&
+  out.feasible = (chord <= params_.length * (1.0 + std::max(0.0, params_.max_strain))) &&
+                 (out.endpoint_error < 50.0 * params_.tolerance) &&
                  (ang_err < 0.05);
   return out;
 }

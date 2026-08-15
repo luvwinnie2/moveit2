@@ -30,6 +30,9 @@
 #include <moveit/robot_model/robot_model.h>
 #include <moveit/robot_state/robot_state.h>
 #include <moveit/robot_model_loader/robot_model_loader.h>
+#include <moveit_msgs/srv/get_position_ik.hpp>
+#include <moveit/robot_state/conversions.h>
+#include <moveit_msgs/msg/display_robot_state.hpp>
 #include <moveit_msgs/msg/display_trajectory.hpp>
 #include <moveit_msgs/msg/motion_plan_request.hpp>
 #include <visualization_msgs/msg/interactive_marker_feedback.hpp>
@@ -67,21 +70,28 @@ public:
                                    "/rviz_moveit_motion_planning_display/"
                                    "robot_interaction_interactive_marker_topic/feedback");
     declare_parameter<double>("ik_timeout", 0.05);
-    declare_parameter<double>("max_ik_jump", 0.6);
+    // The link MoveIt puts the end-effector marker on. The SRDF declares the end-effector with
+    // parent_link="flange", and that is where RViz places the handle, so the marker pose and the
+    // IK target are the same frame.
+    declare_parameter<std::string>("marker_link", "flange");
+    // 0 disables the nearness test, which is the default, because this arm's kinematics plugin is
+    // analytic and returns a single solution: the callback can only accept or reject it, never make
+    // the solver look for a closer one. Rejecting therefore means the arm simply stops following --
+    // measured, 40 of 40 updates failed at 0.6 rad for a 96 mm move that solves perfectly with the
+    // test off. Set it above 0 only with a solver that enumerates solutions.
+    declare_parameter<double>("max_ik_jump", 0.0);
     declare_parameter<double>("ik_tolerance", 0.002);
     declare_parameter<int>("ik_max_iterations", 40);
     declare_parameter<double>("ik_step_gain", 0.6);
-    // UNFINISHED -- off by default.
+    // Off by default, and it should stay off for normal use.
     //
-    // The intent is that dragging the end-effector marker moves the robot, so the carrier follows
-    // because the arm moved. What actually happens is that the tool settles exactly 152.6 mm from
-    // the marker, which is precisely the flange-to-cutting_point offset, so the IK is placing the
-    // flange where the tool was asked to go. Naming the group's tip link in the setFromIK overload
-    // did not change it. Following also only engages after the drag has moved ~100 mm.
+    // The end-effector marker is a *query*: it asks what the arm and the carrier would look like at
+    // a pose, so you can judge it before committing. Nothing may actually move until the trajectory
+    // is planned and executed. Driving the real robot straight from the marker skips that entirely.
     //
-    // Left in place because the diagnosis is concrete and the remaining work is small, but not
-    // enabled: a half-working follower drives the arm to the wrong pose, which is worse than not
-    // following at all. Set true to continue the work.
+    // The preview arm is published as a DisplayRobotState instead, so the carrier preview has a
+    // visible arm to belong to -- without one it looks like the marker is dragging the carrier
+    // around on its own.
     declare_parameter<bool>("drive_robot", false);
     declare_parameter<std::string>("start_pose", "ready");
     frame_id_ = declare_parameter<std::string>("frame_id", "");
@@ -140,6 +150,8 @@ public:
     }
     state_->update();
 
+    marker_link_ = get_parameter("marker_link").as_string();
+    ik_client_ = create_client<moveit_msgs::srv::GetPositionIK>("compute_ik");
     jmg_ = model_->hasJointModelGroup(group_) ? model_->getJointModelGroup(group_) : nullptr;
     if (!jmg_)
     {
@@ -185,6 +197,10 @@ public:
     declare_parameter<double>("cable_min_bend_factor",
                               first.inner_cables.empty() ? 0.0 : first.inner_cables.front().min_bend_factor);
     declare_parameter<bool>("show_all", true);
+    // Colour of a preview (ghost) carrier when it is within every limit. Live-settable, so the
+    // hue can be picked against whatever the scene looks like:
+    //   ros2 param set /carrier_visualizer preview_color "[0.9, 0.4, 1.0]"
+    declare_parameter<std::vector<double>>("preview_color", { 0.2, 0.9, 0.95 });
 
     rebuild();
     param_cb_ = add_on_set_parameters_callback(
@@ -192,6 +208,8 @@ public:
 
     markers_ = create_publisher<visualization_msgs::msg::MarkerArray>("cable_carrier_markers", 1);
     driven_joints_ = create_publisher<sensor_msgs::msg::JointState>("joint_states", 10);
+    preview_robot_ = create_publisher<moveit_msgs::msg::DisplayRobotState>("carrier_preview_state",
+                                                                          rclcpp::QoS(1).transient_local());
     status_ = create_publisher<std_msgs::msg::String>("cable_carrier_status", rclcpp::QoS(1).transient_local());
     marker_fb_ = create_subscription<visualization_msgs::msg::InteractiveMarkerFeedback>(
         get_parameter("marker_feedback_topic").as_string(), rclcpp::QoS(10),
@@ -322,13 +340,6 @@ private:
       return;
     }
 
-    auto seed = std::make_shared<moveit::core::RobotState>(preview_state_ ? *preview_state_ : *state_);
-    Eigen::Isometry3d target = Eigen::Isometry3d::Identity();
-    target.translation() = Eigen::Vector3d(fb.pose.position.x, fb.pose.position.y, fb.pose.position.z);
-    target.linear() = Eigen::Quaterniond(fb.pose.orientation.w, fb.pose.orientation.x,
-                                         fb.pose.orientation.y, fb.pose.orientation.z)
-                          .normalized()
-                          .toRotationMatrix();
 
     // The feedback pose is in the frame the marker was published in. Anything other than the model
     // frame would need a TF lookup; report it rather than silently placing the carrier wrongly.
@@ -341,60 +352,70 @@ private:
       return;
     }
 
-    // Analytic IK, with a nearness test inside the search.
+    // Solve with MoveIt's own IK service rather than in-process.
     //
-    // Jacobian iteration was tried first and is not usable here. setFromDiffIK goes through the
-    // pseudo-inverse, which is unbounded near a singularity -- and this arm's zero pose is one, as
-    // the SRDF notes -- so a 22 mm tool step came back as joint velocities that flung the arm into
-    // its limits and left the tool 0.92 m away. Capping the per-iteration joint step stopped the
-    // blow-up but then could not close the gap within any sane iteration budget: following stopped
-    // entirely (120 of 128 updates failed).
-    //
-    // The robot's own analytic solver has no trouble at singularities. Its weakness is that it
-    // returns whichever branch it likes, so the nearness test is pushed into the solution callback
-    // where it makes the solver keep looking rather than accept a flip. A 0.001 rad limit freezes
-    // the preview completely, which is how we know the callback is honoured.
-    std::vector<double> reference;
-    (preview_state_ ? preview_state_ : state_)->copyJointGroupPositions(jmg_, reference);
-    const double clamp = get_parameter("max_ik_jump").as_double();
-    const auto near_seed = [&reference, clamp](moveit::core::RobotState*,
-                                               const moveit::core::JointModelGroup* group,
-                                               const double* values) {
-      if (clamp <= 0.0)
-      {
-        return true;
-      }
-      const size_t count = group->getActiveVariableCount();
-      if (reference.size() != count)
-      {
-        return true;
-      }
-      for (size_t i = 0; i < count; ++i)
-      {
-        if (std::abs(values[i] - reference[i]) > clamp)
-        {
-          return false;
-        }
-      }
-      return true;
-    };
-
-    // Solve for the link the marker is actually attached to. RViz puts the end-effector marker on
-    // the planning group's tip link, but the kinematics plugin's own tip is the flange, so calling
-    // the overload without a tip placed the *flange* at the target and left the tool exactly
-    // 152.6 mm short -- which is precisely the flange-to-cutting_point offset. Naming the tip lets
-    // MoveIt convert the pose instead.
-    const std::string ik_tip = jmg_->getLinkModelNames().empty() ? std::string()
-                                                                 : jmg_->getLinkModelNames().back();
-    if (!seed->setFromIK(jmg_, target, ik_tip, get_parameter("ik_timeout").as_double(), near_seed))
+    // Calling setFromIK here looked equivalent and was not: measured against /compute_ik for the
+    // same marker pose and the same seed, this node was picking solutions 2.5-2.9 rad from the
+    // current pose while MoveIt picked ones 0.5-0.8 rad away. The previewed carrier was therefore
+    // hanging on an arm configuration that is never drawn, which is exactly what "the preview
+    // floats in mid-air" looks like. Going through the service makes the preview agree with the
+    // ghost the user is actually dragging, by construction.
+    if (!ik_client_->service_is_ready())
     {
-      // Unreachable, or every branch on offer was a flip. Holding the last good pose beats
-      // teleporting the arm; dragging past the envelope is normal.
       return;
     }
-    seed->update();
-    preview_state_ = seed;
-    driveRobot();
+
+    auto req = std::make_shared<moveit_msgs::srv::GetPositionIK::Request>();
+    req->ik_request.group_name = group_;
+    req->ik_request.ik_link_name = marker_link_;
+    req->ik_request.timeout = rclcpp::Duration::from_seconds(get_parameter("ik_timeout").as_double());
+    req->ik_request.pose_stamped.header.frame_id = model_->getModelFrame();
+    req->ik_request.pose_stamped.pose = fb.pose;
+    moveit::core::robotStateToRobotStateMsg(*state_, req->ik_request.robot_state);
+
+    // Fire and forget: the reply lands on the executor thread and only stores a state, so a slow
+    // solve cannot stall the marker callback and back the subscription queue up.
+    ik_client_->async_send_request(
+        req, [this](rclcpp::Client<moveit_msgs::srv::GetPositionIK>::SharedFuture future) {
+          const auto res = future.get();
+          if (!res || res->error_code.val != res->error_code.SUCCESS)
+          {
+            // Unreachable at this pose. Keep the last good preview rather than blanking it;
+            // dragging past the envelope is normal.
+            return;
+          }
+          auto solved = std::make_shared<moveit::core::RobotState>(*state_);
+          const auto& js = res->solution.joint_state;
+          for (size_t i = 0; i < js.name.size() && i < js.position.size(); ++i)
+          {
+            if (model_->hasJointModel(js.name[i]))
+            {
+              solved->setJointPositions(js.name[i], &js.position[i]);
+            }
+          }
+          solved->update();
+          preview_state_ = solved;
+          publishPreviewArm();
+          driveRobot();
+        });
+    return;
+
+  }
+
+  /** Publish the queried configuration as a ghost robot.
+   *
+   *  This is what makes the preview readable: the carrier drawn for that configuration now sits on
+   *  an arm you can see, instead of floating in space where it looks like the marker is dragging
+   *  the carrier itself. The real robot is untouched -- it moves when the plan is executed. */
+  void publishPreviewArm()
+  {
+    if (!preview_state_)
+    {
+      return;
+    }
+    moveit_msgs::msg::DisplayRobotState msg;
+    moveit::core::robotStateToRobotStateMsg(*preview_state_, msg.state);
+    preview_robot_->publish(msg);
   }
 
   /** Push the followed configuration out as the robot's joint state, so the arm itself moves and
@@ -511,17 +532,19 @@ private:
 
   void publish()
   {
-    // Bootstrap: with drive_robot on this node owns /joint_states, so until the marker has been
-    // touched something still has to publish a pose. Without it robot_state_publisher emits no TF,
-    // nothing renders, and RViz cannot even place the interactive marker to drag.
-    if (get_parameter("drive_robot").as_bool() && !preview_state_ && jmg_)
+    // With drive_robot on this node owns /joint_states, so it has to keep publishing whether or not
+    // the marker is being touched. Publishing only on feedback leaves robot_state_publisher with
+    // nothing between drags, TF goes stale, and both RViz and any TF lookup stop working -- which
+    // looks exactly like "it does not move at some positions".
+    if (get_parameter("drive_robot").as_bool() && jmg_)
     {
+      const auto& source = preview_state_ ? *preview_state_ : *state_;
       sensor_msgs::msg::JointState msg;
       msg.header.stamp = now();
       for (const auto* jm : jmg_->getActiveJointModels())
       {
         msg.name.push_back(jm->getName());
-        msg.position.push_back(state_->getVariablePosition(jm->getFirstVariableIndex()));
+        msg.position.push_back(source.getVariablePosition(jm->getFirstVariableIndex()));
       }
       driven_joints_->publish(msg);
     }
@@ -594,9 +617,8 @@ private:
       }
     }
 
-    // Only draw a separate preview when the robot is *not* being driven. With drive_robot on the
-    // arm has already moved to this configuration, so the ordinary carrier above is the answer and
-    // a second one on top of it is just clutter.
+    // The queried configuration's carrier. Drawn alongside the current one so the two can be
+    // compared: this is what the run would look like if the arm went where the marker is.
     if (preview_state_ && attachers_[active_index_] && !get_parameter("drive_robot").as_bool())
     {
       appendCarrier(array, *preview_state_, active_index_, "_marker", 0.55f, id);
@@ -606,24 +628,63 @@ private:
     {
       appendCarrier(array, *goal_state_, active_index_, "_goal", 0.35f, id);
     }
-    // Step through the planned motion so the carrier sweeps the path rather than showing one pose.
+    // Sweep the planned motion once, then clear it. Looping it for ever -- which is what the
+    // modulo used to do -- leaves the display animating long after the motion is finished and
+    // reads as the robot moving on its own, especially since some intermediate poses draw the
+    // carrier red.
     if (!plan_points_.empty() && attachers_[active_index_])
     {
-      moveit::core::RobotState probe(*state_);
-      const auto& q = plan_points_[plan_cursor_ % plan_points_.size()];
-      for (size_t j = 0; j < plan_joints_.size() && j < q.size(); ++j)
+      if (plan_cursor_ < plan_points_.size())
       {
-        probe.setJointPositions(plan_joints_[j], &q[j]);
+        moveit::core::RobotState probe(*state_);
+        const auto& q = plan_points_[plan_cursor_];
+        for (size_t j = 0; j < plan_joints_.size() && j < q.size(); ++j)
+        {
+          probe.setJointPositions(plan_joints_[j], &q[j]);
+        }
+        probe.update();
+        appendCarrier(array, probe, active_index_, "_plan", 0.5f, id);
+        ++plan_cursor_;
       }
-      probe.update();
-      appendCarrier(array, probe, active_index_, "_plan", 0.5f, id);
-      ++plan_cursor_;
+      else
+      {
+        // One pass done: drop every ghost so what is left on screen is the robot as it now is.
+        deleteCarrier(array, active_index_, "_plan");
+        deleteCarrier(array, active_index_, "_goal");
+        deleteCarrier(array, active_index_, "_marker");
+        plan_points_.clear();
+        goal_state_.reset();
+        preview_state_.reset();
+      }
     }
 
     markers_->publish(array);
     std_msgs::msg::String s;
     s.data = status.str() + (plan_summary_.empty() ? "" : ";" + plan_summary_);
     status_->publish(s);
+  }
+
+  /** Stable marker id per carrier and role, so a ghost can be deleted again by name.
+   *  Ids assigned in draw order cannot be deleted reliably because the order changes with which
+   *  ghosts happen to exist that cycle. */
+  static int markerId(size_t index, const std::string& suffix)
+  {
+    const int role = suffix.empty() ? 0 : suffix == "_marker" ? 1 : suffix == "_goal" ? 2 : 3;
+    return static_cast<int>(index) * 10 + role;
+  }
+
+  /** Remove a ghost from the display. RViz keeps the last message for a namespace, so a ghost that
+   *  simply stops being published stays on screen for ever. */
+  void deleteCarrier(visualization_msgs::msg::MarkerArray& array, size_t index,
+                     const std::string& suffix)
+  {
+    visualization_msgs::msg::Marker m;
+    m.header.frame_id = frame_id_;
+    m.header.stamp = now();
+    m.ns = attachers_[index]->params().name + suffix;
+    m.id = markerId(index, suffix);
+    m.action = visualization_msgs::msg::Marker::DELETE;
+    array.markers.push_back(std::move(m));
   }
 
   /** Draw one carrier for an arbitrary state under its own namespace. */
@@ -635,15 +696,39 @@ private:
     m.header.frame_id = frame_id_;
     m.header.stamp = now();
     m.ns = attachers_[index]->params().name + suffix;
-    m.id = id++;
+    m.id = markerId(index, suffix);
+    (void)id;
     m.type = visualization_msgs::msg::Marker::SPHERE_LIST;
     m.action = visualization_msgs::msg::Marker::ADD;
     m.pose.orientation.w = 1.0;
     m.scale.x = m.scale.y = m.scale.z = 2.0 * shape.radius;
+    // Preview carriers use a different hue family from the real one at *every* status, not just
+    // when everything is fine. Sharing the amber "cable over-bent" colour made the two
+    // indistinguishable exactly when it mattered -- and with a 10 mm cable inside, over-bent is the
+    // common case, so both were amber most of the time.
+    //
+    //   real     : green  / amber   / red
+    //   preview  : cyan   / magenta / dark red
     const bool cable_ok = shape.cablesWithinLimit();
-    m.color.r = !shape.feasible ? 0.9f : (cable_ok ? 0.2f : 0.95f);
-    m.color.g = !shape.feasible ? 0.1f : (cable_ok ? 0.5f : 0.65f);
-    m.color.b = !shape.feasible ? 0.2f : (cable_ok ? 0.95f : 0.2f);
+    const auto rgb = get_parameter("preview_color").as_double_array();
+    if (!shape.feasible)
+    {
+      m.color.r = 0.65f;
+      m.color.g = 0.0f;
+      m.color.b = 0.15f;
+    }
+    else if (!cable_ok)
+    {
+      m.color.r = 0.95f;
+      m.color.g = 0.25f;
+      m.color.b = 0.9f;
+    }
+    else
+    {
+      m.color.r = rgb.size() > 0 ? static_cast<float>(rgb[0]) : 0.2f;
+      m.color.g = rgb.size() > 1 ? static_cast<float>(rgb[1]) : 0.9f;
+      m.color.b = rgb.size() > 2 ? static_cast<float>(rgb[2]) : 0.95f;
+    }
     m.color.a = alpha;
     for (const auto& node : shape.nodes)
     {
@@ -664,12 +749,15 @@ private:
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr markers_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr driven_joints_;
+  rclcpp::Publisher<moveit_msgs::msg::DisplayRobotState>::SharedPtr preview_robot_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joints_;
   rclcpp::Subscription<moveit_msgs::msg::MotionPlanRequest>::SharedPtr plan_req_;
   rclcpp::Subscription<moveit_msgs::msg::DisplayTrajectory>::SharedPtr plan_path_;
   rclcpp::Subscription<visualization_msgs::msg::InteractiveMarkerFeedback>::SharedPtr marker_fb_;
   robot_model_loader::RobotModelLoaderPtr loader_;
   const moveit::core::JointModelGroup* jmg_ = nullptr;
+  rclcpp::Client<moveit_msgs::srv::GetPositionIK>::SharedPtr ik_client_;
+  std::string marker_link_;
   std::string group_;
   std::shared_ptr<moveit::core::RobotState> preview_state_;
   std::shared_ptr<moveit::core::RobotState> goal_state_;

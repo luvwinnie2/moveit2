@@ -136,6 +136,25 @@ struct CarrierParams
    *  space. This is what makes the solve pick the *minimum bending energy* shape among the many
    *  that reach the bracket, instead of one that sits against the bend limit. 0 disables it. */
   double energy_relaxation = 0.25;
+  /** Strength of the push that keeps rod nodes out of the robot's links, again projected into the
+   *  endpoint task's null space. This is what makes the run lie *on* the arm instead of through
+   *  it, which is the difference between a picture and a simulation. 0 disables contact. */
+  double contact_stiffness = 1.0;
+  /** Extra clearance kept between the carrier surface and a link surface [m]. */
+  double contact_margin = 0.002;
+
+  // ---- axial behaviour -----------------------------------------------------
+  /** How far the run may stretch, as a fraction of its length.
+   *
+   *  A link chain is built not to stretch, so 0 is right for `articulated_carrier` and
+   *  `planar_chain`. A bare cable or hose does give a little under tension, and allowing that is
+   *  what stops a pose being declared impossible the moment the brackets separate by slightly more
+   *  than the run's nominal length -- the real part stretches and pulls instead. */
+  double max_strain = 0.0;
+  /** Axial stiffness EA [N]. Turns strain into the tension that is reported; it does not change
+   *  the shape, which is set by the geometry. Rough figures: a 10 mm rubber-jacketed cable is of
+   *  the order 1e5 N, a steel-reinforced one far stiffer. */
+  double axial_stiffness = 1.0e5;
 
   // ---- material (for internal-stress reporting) ----------------------------
   /** Young's modulus of the carrier body. Nylon 66 is ~2.0 GPa; steel-reinforced or PA-GF grades

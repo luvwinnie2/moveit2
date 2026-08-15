@@ -168,7 +168,7 @@ int main(int argc, char** argv)
   }
 
   long feasible = 0, colliding = 0;
-  std::vector<double> solve_us, check_us, curvature, chords;
+  std::vector<double> solve_us, check_us, curvature, chords, penetration, strain, tension;
   solve_us.reserve(total);
   check_us.reserve(total);
 
@@ -211,6 +211,9 @@ int main(int argc, char** argv)
     {
       ++feasible;
       curvature.push_back(shape.max_curvature);
+      penetration.push_back(shape.max_penetration);
+      strain.push_back(shape.axial_strain);
+      tension.push_back(shape.tension);
     }
 
     if (dump)
@@ -268,6 +271,18 @@ int main(int argc, char** argv)
               percentile(solve_us, 0.50), percentile(solve_us, 0.95), percentile(solve_us, 1.0));
   std::printf("full check    mean %8.1f us   p50 %8.1f   p95 %8.1f   max %8.1f\n", mean_check,
               percentile(check_us, 0.50), percentile(check_us, 0.95), percentile(check_us, 1.0));
+  if (!strain.empty() && percentile(strain, 1.0) > 0.0)
+  {
+    std::printf("axial strain          : max %.3f %%  -> tension %.1f N  (0 = never pulled taut)\n",
+                100.0 * percentile(strain, 1.0), percentile(tension, 1.0));
+  }
+  if (!penetration.empty())
+  {
+    std::printf("link penetration      : p50 %.1f mm  p95 %.1f mm  max %.1f mm  (0 = the run lies on "
+                "the arm rather than through it)\n",
+                1000.0 * percentile(penetration, 0.5), 1000.0 * percentile(penetration, 0.95),
+                1000.0 * percentile(penetration, 1.0));
+  }
   if (!curvature.empty())
   {
     std::printf("\nachieved bend radius: min %.4f m (hardware limit %.4f m)\n", 1.0 / percentile(curvature, 1.0),
