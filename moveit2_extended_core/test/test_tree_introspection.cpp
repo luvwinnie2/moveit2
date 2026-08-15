@@ -13,6 +13,7 @@
 
 using moveit2_extended::BtFactory;
 using moveit2_extended::describeTree;
+using moveit2_extended::invalidPortValuesInXml;
 using moveit2_extended::missingBehaviorsInXml;
 using moveit2_extended::referencedBehaviorsInXml;
 using moveit2_extended::runningLeaf;
@@ -30,7 +31,11 @@ public:
   }
   static BT::PortsList providedPorts()
   {
-    return { BT::InputPort<std::string>("text", "", "what to echo") };
+    // `times` is typed on purpose: a string port can never hold an invalid value, so without a
+    // non-string port there is nothing for invalidPortValuesInXml to be right about.
+    return { BT::InputPort<std::string>("text", "", "what to echo"),
+             BT::InputPort<int>("times", 1, "how many times"),
+             BT::OutputPort<int>("count", "how many were echoed") };
   }
   BT::NodeStatus tick() override
   {
@@ -309,6 +314,74 @@ TEST(TreeIntrospection, MalformedXmlDoesNotThrow)
   EXPECT_NO_THROW(missingBehaviorsInXml(factory, broken));
   EXPECT_NO_THROW(unknownPortsInXml(factory, broken));
   EXPECT_NO_THROW(treeIdsInXml(broken));
+}
+
+// --- invalidPortValuesInXml -------------------------------------------------------------------
+//
+// The fourth validation check, and the one that exists because BehaviorTree.CPP parses port
+// literals LAZILY: a tree with times="soon" builds without complaint and then fails halfway
+// through a run, having already moved the arm. Catching it at save time is the whole point.
+
+TEST(TreeIntrospection, AValidPortValuePasses)
+{
+  const auto factory = makeFactory();
+  constexpr const char* xml = R"(
+<root main_tree_to_execute="Main">
+  <BehaviorTree ID="Main"><Echo name="ok" text="hi" times="3"/></BehaviorTree>
+</root>)";
+  EXPECT_TRUE(invalidPortValuesInXml(factory, xml).empty());
+}
+
+TEST(TreeIntrospection, AnUnparseableValueIsReportedWithTheTypeAndWhatWasWritten)
+{
+  const auto factory = makeFactory();
+  constexpr const char* xml = R"(
+<root main_tree_to_execute="Main">
+  <BehaviorTree ID="Main"><Echo name="wrong" times="soon"/></BehaviorTree>
+</root>)";
+  const auto invalid = invalidPortValuesInXml(factory, xml);
+  ASSERT_EQ(invalid.size(), 1u);
+  // The message has to name the node, the port, the offending text and the expected type. "stod"
+  // -- which is what the standard converter's what() says on its own -- is useless to the person
+  // editing the tree.
+  EXPECT_NE(invalid[0].find("wrong.times"), std::string::npos) << invalid[0];
+  EXPECT_NE(invalid[0].find("'soon'"), std::string::npos) << invalid[0];
+  EXPECT_NE(invalid[0].find("int"), std::string::npos) << invalid[0];
+}
+
+TEST(TreeIntrospection, ABlackboardReferenceIsNotParsedAsALiteral)
+{
+  // "{key}" is resolved at run time against whatever type the entry holds, so there is nothing to
+  // check here. Reporting it would make every well-wired tree unsaveable.
+  const auto factory = makeFactory();
+  constexpr const char* xml = R"(
+<root main_tree_to_execute="Main">
+  <BehaviorTree ID="Main"><Echo name="wired" times="{how_many}"/></BehaviorTree>
+</root>)";
+  EXPECT_TRUE(invalidPortValuesInXml(factory, xml).empty());
+}
+
+TEST(TreeIntrospection, AnOutputPortTakesADestinationNotAValue)
+{
+  const auto factory = makeFactory();
+  constexpr const char* xml = R"(
+<root main_tree_to_execute="Main">
+  <BehaviorTree ID="Main"><Echo name="out" count="{tally}"/></BehaviorTree>
+</root>)";
+  EXPECT_TRUE(invalidPortValuesInXml(factory, xml).empty());
+}
+
+TEST(TreeIntrospection, AnUnknownPortIsLeftToTheUnknownPortCheck)
+{
+  // Each check reports one kind of problem. Reporting a typo'd port name here as well would show
+  // the user the same mistake twice under two different headings.
+  const auto factory = makeFactory();
+  constexpr const char* xml = R"(
+<root main_tree_to_execute="Main">
+  <BehaviorTree ID="Main"><Echo name="typo" tiems="3"/></BehaviorTree>
+</root>)";
+  EXPECT_TRUE(invalidPortValuesInXml(factory, xml).empty());
+  EXPECT_FALSE(unknownPortsInXml(factory, xml).empty());
 }
 
 int main(int argc, char** argv)

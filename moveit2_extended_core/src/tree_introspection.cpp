@@ -469,7 +469,11 @@ std::vector<std::string> invalidPortValuesInXml(const BtFactory& factory, const 
       }
       catch (const std::exception& exc)
       {
-        invalid.push_back(instance + "." + key + ": " + exc.what());
+        // what() from the standard converters is the name of the function that threw -- "stod",
+        // "stoi" -- which tells the person editing the tree nothing whatsoever. Quote what they
+        // actually wrote and name the type the port wants; that is the whole of the diagnosis.
+        invalid.push_back(instance + "." + key + ": '" + value + "' is not a valid " +
+                          BT::demangle(port->second.type()) + " (" + exc.what() + ")");
       }
     }
   });
