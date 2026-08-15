@@ -1,6 +1,8 @@
 // Copyright 2026 Leow Chee Siang. Apache-2.0.
 #include <moveit2_extended_behaviors/ui_behaviors.hpp>
 
+#include <moveit2_extended_core/blackboard_text.hpp>
+
 #include <moveit/robot_state/conversions.h>
 
 #include <algorithm>
@@ -175,7 +177,11 @@ BT::PortsList GetTextFromUser::providedPorts()
 BtExpected<moveit2_extended_msgs::msg::UserPrompt> GetTextFromUser::createPrompt()
 {
   moveit2_extended_msgs::msg::UserPrompt prompt;
-  prompt.message = getInputOr<std::string>("prompt", std::string("Continue?"));
+  // Expanded rather than used raw: this string is the only thing the operator sees, and BT leaves
+  // an embedded {reference} untouched. "Bend utilisation {worst_bend}" is not a question anyone
+  // can answer.
+  prompt.message =
+      expandBlackboardReferences(config().blackboard, getInputOr<std::string>("prompt", std::string("Continue?")));
   prompt.choices = getInputOr<std::vector<std::string>>("choices", std::vector<std::string>{ "Approve", "Reject" });
   prompt.has_trajectory = false;
   return prompt;
@@ -214,7 +220,8 @@ BtExpected<moveit2_extended_msgs::msg::UserPrompt> WaitForUserTrajectoryApproval
   }
 
   moveit2_extended_msgs::msg::UserPrompt prompt;
-  prompt.message = getInputOr<std::string>("prompt", std::string("Run this trajectory?"));
+  prompt.message = expandBlackboardReferences(config().blackboard,
+                                              getInputOr<std::string>("prompt", std::string("Run this trajectory?")));
   prompt.choices = getInputOr<std::vector<std::string>>("choices", std::vector<std::string>{ "Approve", "Reject" });
   prompt.has_trajectory = true;
   return prompt;

@@ -55,6 +55,7 @@ set(THIS_PACKAGE_DEPS
 # ---------------------------------------------------------------------------
 add_library(${PROJECT_NAME} SHARED
   src/path_utils.cpp
+  src/blackboard_text.cpp
   src/behavior_parameters.cpp
   src/behavior_context.cpp
   src/async_behavior_base.cpp
@@ -137,6 +138,12 @@ if(BUILD_TESTING)
   if(TARGET test_behavior_parameters)
     target_link_libraries(test_behavior_parameters ${PROJECT_NAME})
     ament_target_dependencies(test_behavior_parameters ${THIS_PACKAGE_DEPS})
+  endif()
+
+  ament_add_gtest(test_blackboard_text test/test_blackboard_text.cpp)
+  if(TARGET test_blackboard_text)
+    target_link_libraries(test_blackboard_text ${PROJECT_NAME})
+    ament_target_dependencies(test_blackboard_text ${THIS_PACKAGE_DEPS})
   endif()
 
   ament_add_gtest(test_tree_introspection test/test_tree_introspection.cpp)
