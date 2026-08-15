@@ -85,12 +85,15 @@ def _setup(context, *args, **kwargs):
             output="screen",
             condition=IfCondition(LaunchConfiguration("gui")),
         ),
+        # Deliberately no joint_state_publisher when gui:=false. carrier_visualizer publishes
+        # /joint_states itself in drive_robot mode, and two publishers would fight: the slider set
+        # would keep resetting whatever the marker just solved for.
         Node(
             package="joint_state_publisher",
             executable="joint_state_publisher",
             name="joint_state_publisher",
             output="screen",
-            condition=UnlessCondition(LaunchConfiguration("gui")),
+            condition=IfCondition(LaunchConfiguration("static_joint_source")),
         ),
         Node(
             package="moveit_ros_move_group",
@@ -112,6 +115,7 @@ def _setup(context, *args, **kwargs):
                     "carrier_config": carrier_config,
                     "planning_group": "arm",
                     "rate": 20.0,
+                    "drive_robot": False,
                 },
                 # Needed for the IK that makes the carrier follow the end-effector marker while it
                 # is dragged. Without it the node logs that the group has no solver and simply
@@ -152,7 +156,12 @@ def generate_launch_description():
                 description="crx5ia_moveit からの相対パス。ブラケット座標系入りの版を既定にしている",
             ),
             DeclareLaunchArgument("use_carrier_collision", default_value="true"),
-            DeclareLaunchArgument("gui", default_value="true"),
+            DeclareLaunchArgument(
+                "gui", default_value="false",
+                description="関節スライダを出す。static_joint_source と排他"),
+            DeclareLaunchArgument(
+                "static_joint_source", default_value="true",
+                description="joint_state_publisher を使う。マーカー追従（drive_robot）は未完成のため既定はこちら"),
             DeclareLaunchArgument("rviz", default_value="true"),
             OpaqueFunction(function=_setup),
         ]

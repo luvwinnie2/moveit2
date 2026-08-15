@@ -48,6 +48,10 @@
 namespace
 {
 constexpr double kDeg = M_PI / 180.0;
+/** Largest joint move any single Jacobian iteration may make, radians. Small enough that a
+ *  singular pseudo-inverse cannot throw the arm across its workspace, large enough that a normal
+ *  drag converges within the iteration budget. */
+constexpr double kMaxJointStepPerIteration = 0.02;
 }
 
 class CarrierVisualizer : public rclcpp::Node
@@ -62,9 +66,39 @@ public:
     declare_parameter<std::string>("marker_feedback_topic",
                                    "/rviz_moveit_motion_planning_display/"
                                    "robot_interaction_interactive_marker_topic/feedback");
-    declare_parameter<double>("ik_timeout", 0.02);
+    declare_parameter<double>("ik_timeout", 0.05);
+    declare_parameter<double>("max_ik_jump", 0.6);
+    declare_parameter<double>("ik_tolerance", 0.002);
+    declare_parameter<int>("ik_max_iterations", 40);
+    declare_parameter<double>("ik_step_gain", 0.6);
+    // UNFINISHED -- off by default.
+    //
+    // The intent is that dragging the end-effector marker moves the robot, so the carrier follows
+    // because the arm moved. What actually happens is that the tool settles exactly 152.6 mm from
+    // the marker, which is precisely the flange-to-cutting_point offset, so the IK is placing the
+    // flange where the tool was asked to go. Naming the group's tip link in the setFromIK overload
+    // did not change it. Following also only engages after the drag has moved ~100 mm.
+    //
+    // Left in place because the diagnosis is concrete and the remaining work is small, but not
+    // enabled: a half-working follower drives the arm to the wrong pose, which is worse than not
+    // following at all. Set true to continue the work.
+    declare_parameter<bool>("drive_robot", false);
+    declare_parameter<std::string>("start_pose", "ready");
     frame_id_ = declare_parameter<std::string>("frame_id", "");
     declare_parameter<double>("rate", 20.0);
+  }
+
+  bool jmgHasState(const std::string& name) const
+  {
+    const auto* g = model_->hasJointModelGroup(get_parameter("planning_group").as_string())
+                        ? model_->getJointModelGroup(get_parameter("planning_group").as_string())
+                        : nullptr;
+    if (!g)
+    {
+      return false;
+    }
+    const auto& states = g->getDefaultStateNames();
+    return std::find(states.begin(), states.end(), name) != states.end();
   }
 
   /** Deferred because RobotModelLoader needs a shared_ptr to this node, which does not exist yet
@@ -96,6 +130,15 @@ public:
     }
     state_ = std::make_shared<moveit::core::RobotState>(model_);
     state_->setToDefaultValues();
+    // The all-zeros pose is a singularity on this arm (the SRDF says so, which is why it defines a
+    // separate 'home'), and starting a Jacobian follower at a singularity is asking for trouble.
+    const std::string start_pose = get_parameter("start_pose").as_string();
+    if (!start_pose.empty() && jmgHasState(start_pose))
+    {
+      state_->setToDefaultValues(model_->getJointModelGroup(get_parameter("planning_group").as_string()),
+                                 start_pose);
+    }
+    state_->update();
 
     jmg_ = model_->hasJointModelGroup(group_) ? model_->getJointModelGroup(group_) : nullptr;
     if (!jmg_)
@@ -148,6 +191,7 @@ public:
         [this](const std::vector<rclcpp::Parameter>& p) { return onParameters(p); });
 
     markers_ = create_publisher<visualization_msgs::msg::MarkerArray>("cable_carrier_markers", 1);
+    driven_joints_ = create_publisher<sensor_msgs::msg::JointState>("joint_states", 10);
     status_ = create_publisher<std_msgs::msg::String>("cable_carrier_status", rclcpp::QoS(1).transient_local());
     marker_fb_ = create_subscription<visualization_msgs::msg::InteractiveMarkerFeedback>(
         get_parameter("marker_feedback_topic").as_string(), rclcpp::QoS(10),
@@ -256,6 +300,9 @@ private:
     }
     state_->update();
     have_state_ = true;
+    // Deliberately does not touch preview_state_. In drive mode this message is our own echo and
+    // already agrees with it; when the robot is driven by something else, the preview is what the
+    // marker is asking for and must not be overwritten by the current pose.
   }
 
   /** Follow MoveIt's end-effector marker while it is being dragged.
@@ -294,13 +341,79 @@ private:
       return;
     }
 
-    if (seed->setFromIK(jmg_, target, get_parameter("ik_timeout").as_double()))
+    // Analytic IK, with a nearness test inside the search.
+    //
+    // Jacobian iteration was tried first and is not usable here. setFromDiffIK goes through the
+    // pseudo-inverse, which is unbounded near a singularity -- and this arm's zero pose is one, as
+    // the SRDF notes -- so a 22 mm tool step came back as joint velocities that flung the arm into
+    // its limits and left the tool 0.92 m away. Capping the per-iteration joint step stopped the
+    // blow-up but then could not close the gap within any sane iteration budget: following stopped
+    // entirely (120 of 128 updates failed).
+    //
+    // The robot's own analytic solver has no trouble at singularities. Its weakness is that it
+    // returns whichever branch it likes, so the nearness test is pushed into the solution callback
+    // where it makes the solver keep looking rather than accept a flip. A 0.001 rad limit freezes
+    // the preview completely, which is how we know the callback is honoured.
+    std::vector<double> reference;
+    (preview_state_ ? preview_state_ : state_)->copyJointGroupPositions(jmg_, reference);
+    const double clamp = get_parameter("max_ik_jump").as_double();
+    const auto near_seed = [&reference, clamp](moveit::core::RobotState*,
+                                               const moveit::core::JointModelGroup* group,
+                                               const double* values) {
+      if (clamp <= 0.0)
+      {
+        return true;
+      }
+      const size_t count = group->getActiveVariableCount();
+      if (reference.size() != count)
+      {
+        return true;
+      }
+      for (size_t i = 0; i < count; ++i)
+      {
+        if (std::abs(values[i] - reference[i]) > clamp)
+        {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    // Solve for the link the marker is actually attached to. RViz puts the end-effector marker on
+    // the planning group's tip link, but the kinematics plugin's own tip is the flange, so calling
+    // the overload without a tip placed the *flange* at the target and left the tool exactly
+    // 152.6 mm short -- which is precisely the flange-to-cutting_point offset. Naming the tip lets
+    // MoveIt convert the pose instead.
+    const std::string ik_tip = jmg_->getLinkModelNames().empty() ? std::string()
+                                                                 : jmg_->getLinkModelNames().back();
+    if (!seed->setFromIK(jmg_, target, ik_tip, get_parameter("ik_timeout").as_double(), near_seed))
     {
-      seed->update();
-      preview_state_ = seed;
+      // Unreachable, or every branch on offer was a flip. Holding the last good pose beats
+      // teleporting the arm; dragging past the envelope is normal.
+      return;
     }
-    // IK failure is normal while dragging past the reachable envelope: keep the last good preview
-    // instead of blanking the carrier.
+    seed->update();
+    preview_state_ = seed;
+    driveRobot();
+  }
+
+  /** Push the followed configuration out as the robot's joint state, so the arm itself moves and
+   *  the carrier follows it. Only one publisher may own /joint_states, so the launch drops
+   *  joint_state_publisher when this is on. */
+  void driveRobot()
+  {
+    if (!preview_state_ || !get_parameter("drive_robot").as_bool())
+    {
+      return;
+    }
+    sensor_msgs::msg::JointState msg;
+    msg.header.stamp = now();
+    for (const auto* jm : jmg_->getActiveJointModels())
+    {
+      msg.name.push_back(jm->getName());
+      msg.position.push_back(preview_state_->getVariablePosition(jm->getFirstVariableIndex()));
+    }
+    driven_joints_->publish(msg);
   }
 
   /** RViz publishes the request when you press Plan. Joint goals carry the exact configuration the
@@ -398,6 +511,21 @@ private:
 
   void publish()
   {
+    // Bootstrap: with drive_robot on this node owns /joint_states, so until the marker has been
+    // touched something still has to publish a pose. Without it robot_state_publisher emits no TF,
+    // nothing renders, and RViz cannot even place the interactive marker to drag.
+    if (get_parameter("drive_robot").as_bool() && !preview_state_ && jmg_)
+    {
+      sensor_msgs::msg::JointState msg;
+      msg.header.stamp = now();
+      for (const auto* jm : jmg_->getActiveJointModels())
+      {
+        msg.name.push_back(jm->getName());
+        msg.position.push_back(state_->getVariablePosition(jm->getFirstVariableIndex()));
+      }
+      driven_joints_->publish(msg);
+    }
+
     if (pending_rebuild_)
     {
       // Rebuilt here rather than in the parameter callback: the callback runs before the values
@@ -466,8 +594,10 @@ private:
       }
     }
 
-    // Live follow of the end-effector marker.
-    if (preview_state_ && attachers_[active_index_])
+    // Only draw a separate preview when the robot is *not* being driven. With drive_robot on the
+    // arm has already moved to this configuration, so the ordinary carrier above is the answer and
+    // a second one on top of it is just clutter.
+    if (preview_state_ && attachers_[active_index_] && !get_parameter("drive_robot").as_bool())
     {
       appendCarrier(array, *preview_state_, active_index_, "_marker", 0.55f, id);
     }
@@ -533,6 +663,7 @@ private:
   size_t active_index_ = 0;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr markers_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_;
+  rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr driven_joints_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joints_;
   rclcpp::Subscription<moveit_msgs::msg::MotionPlanRequest>::SharedPtr plan_req_;
   rclcpp::Subscription<moveit_msgs::msg::DisplayTrajectory>::SharedPtr plan_path_;
