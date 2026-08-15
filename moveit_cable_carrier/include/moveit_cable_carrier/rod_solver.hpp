@@ -127,7 +127,18 @@ private:
   void forward(const Eigen::Isometry3d& base_bracket, const JointRotations& rotations,
                EigenSTL::vector_Vector3d& nodes, std::vector<Eigen::Matrix3d>& frames) const;
 
+  /** Free length between the brackets for the current solve.
+   *
+   *  Equals CarrierParams::length for a fixed run. With a retraction unit it shrinks towards the
+   *  chord, because the surplus is inside the unit and not between the brackets at all. */
+  double activeLength(double chord) const;
+  double activeSegmentLength() const { return active_length_ / params_.num_segments; }
+  double activeMaxTurnAngle() const { return activeSegmentLength() / params_.shapeBendRadius(); }
+
   CarrierParams params_;
+  /** Set once per solve. Safe as mutable state because callers hold one solver per thread
+   *  (CollisionEnvCarrier keeps its attachers thread_local). */
+  mutable double active_length_ = 0.0;
 };
 
 /** The bracket's exit direction: local +X of the bracket frame. Both brackets point *into* the

@@ -100,6 +100,14 @@ struct CarrierParams
   double retraction_bias = 0.0;
   /** Direction, in the base bracket frame, that the retraction unit pulls the loop. */
   Eigen::Vector3d retraction_dir = -Eigen::Vector3d::UnitX();
+  /** Service loop a retraction unit leaves between the brackets, in metres.
+   *
+   *  A fixed-length run has to be long enough for the *widest* bracket separation the arm ever
+   *  produces, which means it is grossly slack at every other pose and balloons out into the work
+   *  area. That is the whole reason retraction units exist on axes 3-6: the spring pulls the
+   *  surplus back through the mount and leaves only this much loop. Ignored unless
+   *  mount_style is Retraction. */
+  double retraction_slack = 0.05;
 
   // ---- mechanics -----------------------------------------------------------
   BendMode bend_mode = BendMode::Planar;

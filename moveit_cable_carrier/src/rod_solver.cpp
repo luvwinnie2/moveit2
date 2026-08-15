@@ -70,7 +70,7 @@ EigenSTL::vector_Vector3d RodSolver::initialGuess(const Eigen::Isometry3d& base_
                                                   const Eigen::Isometry3d& tip_bracket) const
 {
   const int n = params_.num_segments;
-  const double L = params_.length;
+  const double L = active_length_;
   const Eigen::Vector3d p0 = base_bracket.translation();
   const Eigen::Vector3d p1 = tip_bracket.translation();
   // Both bracket frames have +X along the direction of travel (base -> tip), so both Hermite
@@ -91,6 +91,20 @@ EigenSTL::vector_Vector3d RodSolver::initialGuess(const Eigen::Isometry3d& base_
   // drag it all the way across.
   Eigen::Vector3d bow_dir = chord_dir.cross(bend_axis_world);
   bow_dir = bow_dir.norm() > 1e-6 ? bow_dir.normalized() : chord_dir.unitOrthogonal();
+
+  // With a retraction unit the loop does not go wherever the geometry happens to point: the unit
+  // and its guide decide which way it bulges, which is the whole point of fitting one. Take the
+  // component of the configured direction perpendicular to the chord, since a component along the
+  // chord cannot lengthen the curve anyway.
+  if (params_.mount_style == MountStyle::Retraction && params_.retraction_dir.norm() > 1e-9)
+  {
+    const Eigen::Vector3d wanted = (base_bracket.linear() * params_.retraction_dir).normalized();
+    const Eigen::Vector3d perp = wanted - wanted.dot(chord_dir) * chord_dir;
+    if (perp.norm() > 1e-6)
+    {
+      bow_dir = perp.normalized();
+    }
+  }
 
   // The guess must already have arc length L, otherwise the inextensibility projection has to
   // create the slack itself -- and pushing collinear nodes apart along a straight line simply
@@ -176,10 +190,24 @@ inline Eigen::Matrix3d expSO3(const Eigen::Vector3d& w)
 }
 }  // namespace
 
+double RodSolver::activeLength(double chord) const
+{
+  if (params_.mount_style != MountStyle::Retraction)
+  {
+    return params_.length;
+  }
+  // The unit keeps a controlled service loop and swallows the rest. Never let the free length fall
+  // to the chord itself: a perfectly taut run has no admissible shape once the bracket tangents are
+  // also fixed, so a little slack always has to remain.
+  const double lower = chord * 1.02;
+  const double wanted = chord + std::max(0.0, params_.retraction_slack);
+  return std::clamp(wanted, std::min(lower, params_.length), params_.length);
+}
+
 void RodSolver::clampJoint(Eigen::Matrix3d& rotation) const
 {
   Eigen::Vector3d v = logSO3(rotation);
-  const double theta_max = params_.maxTurnAngle();
+  const double theta_max = activeMaxTurnAngle();
 
   // Split the joint rotation into twist about the carrier's own axis and bending perpendicular to
   // it. They are different mechanical stops and must be limited separately: a 3D dresspack quotes
@@ -222,7 +250,7 @@ void RodSolver::forward(const Eigen::Isometry3d& base_bracket, const JointRotati
                         EigenSTL::vector_Vector3d& nodes, std::vector<Eigen::Matrix3d>& frames) const
 {
   const int n = params_.num_segments;
-  const double seg_len = params_.segmentLength();
+  const double seg_len = activeSegmentLength();
   frames.assign(n + 1, Eigen::Matrix3d::Identity());
   nodes.assign(n + 1, base_bracket.translation());
 
@@ -277,7 +305,6 @@ CarrierShape RodSolver::solve(const Eigen::Isometry3d& base_bracket, const Eigen
                               const CarrierShape& guess) const
 {
   const int n = params_.num_segments;
-  const double seg_len = params_.segmentLength();
 
   CarrierShape out;
   out.radius = params_.capsuleRadius();
@@ -285,6 +312,10 @@ CarrierShape RodSolver::solve(const Eigen::Isometry3d& base_bracket, const Eigen
   // A carrier of arc length L can never span a chord longer than L. This is the single most common
   // way a mounting configuration is wrong and must not be reported as a converged shape.
   const double chord = (tip_bracket.translation() - base_bracket.translation()).norm();
+
+  // Must be set before the initial guess, which sizes itself to this length.
+  active_length_ = activeLength(chord);
+  const double seg_len = activeSegmentLength();
 
   // The unknowns are the joint rotations, not the node positions. That is the whole point of this
   // formulation: edge lengths cannot drift because they are never solved for, and the minimum bend
@@ -299,13 +330,13 @@ CarrierShape RodSolver::solve(const Eigen::Isometry3d& base_bracket, const Eigen
   const Eigen::Vector3d target_d = exitDirection(tip_bracket);
   // Puts the orientation residual in the same units as the position residual so one tolerance and
   // one damping factor cover both.
-  const double ang_scale = 0.5 * params_.length;
+  const double ang_scale = 0.5 * active_length_;
 
   EigenSTL::vector_Vector3d nodes;
   std::vector<Eigen::Matrix3d> frames;
   Eigen::MatrixXd jacobian(6, 3 * std::max(1, n - 1));
   Eigen::Matrix<double, 6, 1> residual;
-  const double damping = 1e-6 + 1e-4 * params_.length * params_.length;
+  const double damping = 1e-6 + 1e-4 * active_length_ * active_length_;
 
   double pos_err = 0.0;
   double ang_err = 0.0;

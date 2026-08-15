@@ -90,6 +90,7 @@ bool parseCarrierYaml(const std::string& yaml_text, std::vector<CarrierParams>& 
         c.twist_limit_per_link *= M_PI / 180.0;  // authored in degrees, which is how it is quoted
       }
       assignIf(node, "retraction_bias", c.retraction_bias);
+      assignIf(node, "retraction_slack", c.retraction_slack);
 
       if (node["kind"])
       {
