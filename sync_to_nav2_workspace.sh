@@ -24,6 +24,7 @@ PACKAGES=(
   moveit_cable_carrier
   moveit2_extended_msgs
   moveit2_extended_core
+  moveit2_extended_behaviors
 )
 
 if [[ ! -d "$DEST" ]]; then
