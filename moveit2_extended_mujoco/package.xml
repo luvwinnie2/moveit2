@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>moveit2_extended_mujoco</name>
+  <version>0.1.0</version>
+  <description>
+    MuJoCo behind ros2_control.
+
+    The simulator is exposed as a hardware_interface::SystemInterface rather than as a bespoke node
+    that replays trajectories. That is the difference between testing the robot and testing the
+    test: with this, joint_trajectory_controller drives the simulated arm, MoveIt executes
+    FollowJointTrajectory into it exactly as it would on hardware, and the same Objective XML runs
+    in both places. It also needs no GPU, so it can run while one is busy with something else.
+
+    urdf_to_mujoco.py converts a ROS URDF into a model MuJoCo will load, adding the position
+    actuators and named keyframes that a URDF has no way to express.
+  </description>
+  <maintainer email="cheesiang_leow@alps-lab.org">Leow Chee Siang</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>hardware_interface</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+  <depend>moveit2_extended_msgs</depend>
+  <depend>moveit_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_srvs</depend>
+
+  <!-- mujoco is a pip install with no rosdep key; the CMake below asks Python where it lives. -->
+  <exec_depend>controller_manager</exec_depend>
+  <exec_depend>joint_trajectory_controller</exec_depend>
+  <exec_depend>joint_state_broadcaster</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <hardware_interface plugin="${prefix}/mujoco_system_plugin.xml"/>
+  </export>
+</package>

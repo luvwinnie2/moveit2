@@ -1,0 +1,10 @@
+<library path="moveit2_extended_mujoco">
+  <class name="moveit2_extended_mujoco/MujocoSystem"
+         type="moveit2_extended::mujoco_sim::MujocoSystem"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>
+      MuJoCo as a ros2_control system, so the simulated arm is driven by the same controllers as a
+      real one and MoveIt needs no simulator-specific code.
+    </description>
+  </class>
+</library>

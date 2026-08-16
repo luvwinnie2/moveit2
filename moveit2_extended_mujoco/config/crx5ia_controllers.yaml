@@ -1,0 +1,36 @@
+# Controllers for the MuJoCo-backed arm.
+#
+# These are stock ros2_control controllers, which is the entire point: nothing here is
+# simulator-specific, so the same controller configuration describes the real arm.
+controller_manager:
+  ros__parameters:
+    # MuJoCo's own timestep is 2 ms; running the control loop at 100 Hz means each read() advances
+    # the simulation by five steps, which is stable and cheap. Faster gains nothing while the
+    # trajectories being executed are planned at 20 Hz.
+    update_rate: 100
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    arm_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+arm_controller:
+  ros__parameters:
+    joints: [J1, J2, J3, J4, J5, J6]
+    command_interfaces: [position]
+    state_interfaces: [position, velocity]
+    # The simulated arm tracks well, but not perfectly -- the position actuators have finite gain,
+    # so demanding tight tolerances would abort trajectories that are physically fine. These are
+    # loose on purpose and should be tightened against measurements, not guesses.
+    constraints:
+      stopped_velocity_tolerance: 0.05
+      goal_time: 2.0
+      J1: { trajectory: 0.5, goal: 0.05 }
+      J2: { trajectory: 0.5, goal: 0.05 }
+      J3: { trajectory: 0.5, goal: 0.05 }
+      J4: { trajectory: 0.5, goal: 0.05 }
+      J5: { trajectory: 0.5, goal: 0.05 }
+      J6: { trajectory: 0.5, goal: 0.05 }
+    action_monitor_rate: 20.0
+    allow_partial_joints_goal: false

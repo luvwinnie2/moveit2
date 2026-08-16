@@ -1,0 +1,23 @@
+# Put the simulated robot at a joint configuration, without moving it there.
+#
+# The point of a teleport is to set up a test in one step instead of driving to the pose first, so
+# this is deliberately NOT a motion: it writes the state and returns.
+#
+# It does NOT manage controllers, and that is the same boundary MoveIt Pro draws around its
+# equivalent service. A running joint_trajectory_controller still holds the goal it was given, so
+# teleporting mid-trajectory means the controller will immediately pull the arm back. Deactivate the
+# controller first if that is not what you want -- doing it silently inside here would make one
+# service quietly reconfigure the robot.
+#
+# Exactly one of joint_state / keyframe is used; keyframe wins when both are given.
+moveit_msgs/RobotState joint_state
+# A named keyframe defined in the MJCF model, e.g. "home". Model-defined poses beat hard-coded
+# numbers in a launch file: the pose travels with the robot it belongs to.
+string keyframe
+# Stop the arm dead rather than leaving it with the velocity it had.
+bool zero_velocity
+---
+bool success
+string message
+# Where the joints actually ended up, which is not the request when a joint was out of limits.
+sensor_msgs/JointState resulting_state

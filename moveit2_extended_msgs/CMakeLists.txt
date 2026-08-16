@@ -48,6 +48,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/ListTools.srv"
   "srv/GetActiveTool.srv"
 
+  "srv/SetSimulationState.srv"
   "srv/SolveIKBatch.srv"
   "srv/PlanWithGpu.srv"
 

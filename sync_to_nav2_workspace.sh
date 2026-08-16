@@ -33,6 +33,7 @@ PACKAGES=(
   moveit2_extended_studio
   moveit2_extended_rviz
   moveit2_extended_gpu
+  moveit2_extended_mujoco
 )
 
 if [[ ! -d "$DEST" ]]; then
