@@ -375,6 +375,118 @@ def add_scene(mjcf: str, floor: bool = True) -> str:
     return ET.tostring(root, encoding="unicode")
 
 
+def add_carriers(mjcf: str, carrier_yaml: str, collide: bool = False, verbose: bool = True) -> str:
+    """Build each cable carrier as a jointed chain, with the real mechanical limits as joint stops.
+
+    A dresspack is not a soft rope. It is a chain of rigid links with hard stops: it bends to a
+    minimum radius and no tighter, and each link twists a few degrees and no further. Modelling it
+    with a bending STIFFNESS -- which is what MuJoCo's cable plugin offers, and what every soft-body
+    tutorial reaches for -- gets the shape roughly right and the limits wrong, and the limits are the
+    entire question this project asks of a carrier.
+
+    So each segment gets three hinges with explicit ranges:
+      bend_y, bend_z   +/- (segment length / minimum bend radius), the angle at which a chain of
+                       this segment length traces a circle of exactly R;
+      twist_x          +/- the per-link torsion stop from the configuration.
+
+    The result is a carrier that physically cannot bend tighter than its rating, so a pose the real
+    one could not reach is a pose the simulated one visibly jams in, instead of one it quietly
+    bends through. The same numbers feed the CPU checker, from the same file.
+    """
+    import math
+
+    import yaml
+
+    root = ET.fromstring(mjcf)
+    with open(carrier_yaml, encoding="utf-8") as handle:
+        config = yaml.safe_load(handle)
+
+    bodies = {b.get("name"): b for b in root.iter("body")}
+    equality = root.find("equality")
+    if equality is None:
+        equality = ET.SubElement(root, "equality")
+
+    built = []
+    for carrier in config.get("carriers", []):
+        name = carrier["name"]
+        base_link = carrier.get("base_link")
+        tip_link = carrier.get("tip_link")
+        parent = bodies.get(base_link)
+        if parent is None or tip_link not in bodies:
+            if verbose:
+                print(f"carrier '{name}': {base_link} or {tip_link} is not in the model, skipped",
+                      file=sys.stderr)
+            continue
+
+        segments = int(carrier.get("num_segments", 16))
+        length = float(carrier.get("length", 0.5))
+        radius_min = float(carrier.get("bend_radius", 0.05))
+        seg = length / segments
+        # The angle per joint that traces a circle of radius R with chords of this length.
+        bend_limit = seg / radius_min
+        twist_limit = math.radians(float(carrier.get("twist_limit_per_link_deg", 10.0)))
+        thickness = max(float(carrier.get("outer_width", 0.03)),
+                        float(carrier.get("outer_height", 0.03))) / 2.0
+
+        base_mount = carrier.get("base_mount", {})
+        pos = " ".join(str(v) for v in base_mount.get("xyz", [0, 0, 0]))
+        rpy = base_mount.get("rpy", [0, 0, 0])
+
+        current = parent
+        for index in range(segments):
+            body = ET.SubElement(current, "body", {
+                "name": f"{name}_seg{index}",
+                "pos": pos if index == 0 else f"{seg} 0 0",
+                **({"euler": " ".join(str(v) for v in rpy)} if index == 0 else {}),
+            })
+            # Twist about the carrier's own axis, then bend in the two perpendicular planes.
+            ET.SubElement(body, "joint", {
+                "name": f"{name}_twist{index}", "type": "hinge", "axis": "1 0 0",
+                "range": f"{-twist_limit} {twist_limit}", "limited": "true",
+                "damping": "0.02", "stiffness": "0.5",
+            })
+            for axis, label in (("0 1 0", "bendy"), ("0 0 1", "bendz")):
+                ET.SubElement(body, "joint", {
+                    "name": f"{name}_{label}{index}", "type": "hinge", "axis": axis,
+                    "range": f"{-bend_limit} {bend_limit}", "limited": "true",
+                    "damping": "0.02", "stiffness": "0.5",
+                })
+            ET.SubElement(body, "geom", {
+                "name": f"{name}_geom{index}",
+                "type": "capsule",
+                "fromto": f"0 0 0 {seg} 0 0",
+                "size": f"{thickness}",
+                "mass": "0.05",
+                "rgba": "0.12 0.12 0.14 1",
+                # Off by default: 44 extra bodies in contact with the arm is a stability risk, and
+                # the carrier's clearance is checked properly by the CPU solver, not by watching
+                # whether the simulation explodes.
+                "contype": "1" if collide else "0",
+                "conaffinity": "1" if collide else "0",
+            })
+            current = body
+
+        tip_mount = carrier.get("tip_mount", {})
+        ET.SubElement(equality, "connect", {
+            "name": f"{name}_tip",
+            "body1": f"{name}_seg{segments - 1}",
+            "body2": tip_link,
+            "anchor": f"{seg} 0 0",
+            # Soft, so a pose the carrier cannot actually span pulls visibly rather than launching
+            # the arm across the room.
+            "solref": "0.02 1",
+            "solimp": "0.9 0.95 0.001",
+        })
+        built.append((name, segments, seg, bend_limit, twist_limit))
+
+    if verbose:
+        for name, segments, seg, bend, twist in built:
+            print(f"carrier '{name}': {segments} segments of {seg * 1000:.1f} mm, "
+                  f"bend limit {math.degrees(bend):.1f} deg/link, twist {math.degrees(twist):.1f} deg/link",
+                  file=sys.stderr)
+    return ET.tostring(root, encoding="unicode")
+
+
 def revolute_joint_names(urdf_path: str) -> list[str]:
     root = ET.parse(urdf_path).getroot()
     return [j.get("name", "") for j in root.findall("joint") if j.get("type") in ("revolute", "continuous")]
@@ -391,6 +503,13 @@ def main() -> int:
                         help="reflected rotor inertia per joint (kg m^2). A geared arm has this; "
                              "URDF cannot express it and MuJoCo defaults it to zero")
     parser.add_argument("--damping-ratio", type=float, default=1.0)
+    parser.add_argument("--carrier",
+                        help="cable-carrier YAML; each carrier becomes a jointed chain whose joint "
+                             "limits are its real minimum bend radius and torsion stop")
+    parser.add_argument("--carrier-collides", action="store_true",
+                        help="let the carrier collide with the robot (off by default: 40+ extra "
+                             "contact bodies are a stability risk and the CPU solver is what "
+                             "actually judges clearance)")
     parser.add_argument("--no-scene", action="store_true",
                         help="skip the floor, lights and cameras (physics is unaffected either way)")
     parser.add_argument("--srdf",
@@ -425,6 +544,8 @@ def main() -> int:
         keyframes[name] = parsed
     if args.srdf:
         mjcf = add_collision_excludes(mjcf, args.srdf)
+    if args.carrier:
+        mjcf = add_carriers(mjcf, args.carrier, args.carrier_collides)
     if not args.no_scene:
         mjcf = add_scene(mjcf)
     mjcf = add_actuators_and_keyframes(mjcf, joints, args.tolerance, args.armature,

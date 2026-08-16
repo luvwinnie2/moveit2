@@ -6,7 +6,9 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_lifecycle/state.hpp>
 
+#include <moveit2_extended_msgs/msg/carrier_diagnostics.hpp>
 #include <moveit2_extended_msgs/srv/set_simulation_state.hpp>
+#include <sensor_msgs/msg/joint_state.hpp>
 #include <std_srvs/srv/trigger.hpp>
 
 #include <memory>
@@ -65,6 +67,29 @@ private:
   void onReset(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
                std::shared_ptr<std_srvs::srv::Trigger::Response> response);
 
+  /** One cable carrier, as it exists inside the model.
+   *
+   *  A dresspack does not only fail by being over-bent. It is anchored at both ends, so a pose that
+   *  needs more span than it has pulls on those anchors, and that tension is what tears a carrier
+   *  off its bracket or parts the cables inside it. The anchor is an equality constraint here, so
+   *  the force MuJoCo needs to hold it together IS that tension -- it is measured, not modelled
+   *  separately.
+   */
+  struct Carrier
+  {
+    std::string name;
+    std::vector<int> bend_dofs;    //!< qpos addresses of the two bending hinges per segment
+    std::vector<int> twist_dofs;
+    std::vector<int> geoms;        //!< for colouring by risk
+    double bend_limit = 0.0;       //!< rad, from the minimum bend radius
+    double twist_limit = 0.0;      //!< rad, per link
+    int equality = -1;             //!< the anchor holding the far end
+  };
+  std::vector<Carrier> carriers_;
+
+  void discoverCarriers();
+  void publishCarrierRisk();
+
   mjModel* model_ = nullptr;
   mjData* data_ = nullptr;
   std::mutex mutex_;
@@ -89,6 +114,10 @@ private:
   rclcpp::Node::SharedPtr node_;
   rclcpp::Service<moveit2_extended_msgs::srv::SetSimulationState>::SharedPtr set_state_service_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_service_;
+  //! Every joint in the model, including the carriers', so a viewer can draw what the arm cannot say.
+  rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr sim_state_publisher_;
+  std::vector<rclcpp::Publisher<moveit2_extended_msgs::msg::CarrierDiagnostics>::SharedPtr> carrier_publishers_;
+  rclcpp::Time last_publish_{ 0, 0, RCL_ROS_TIME };
   rclcpp::executors::SingleThreadedExecutor::SharedPtr executor_;
   std::thread spin_thread_;
 };

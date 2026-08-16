@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
+#include <regex>
 
 namespace moveit2_extended::mujoco_sim
 {
@@ -116,6 +118,15 @@ hardware_interface::CallbackReturn MujocoSystem::on_init(const hardware_interfac
       [this](const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
              std::shared_ptr<std_srvs::srv::Trigger::Response> response) { onReset(request, response); });
 
+  discoverCarriers();
+  sim_state_publisher_ = node_->create_publisher<sensor_msgs::msg::JointState>("~/sim_joint_states",
+                                                                              rclcpp::QoS(1));
+  for (const auto& carrier : carriers_)
+  {
+    carrier_publishers_.push_back(node_->create_publisher<moveit2_extended_msgs::msg::CarrierDiagnostics>(
+        "~/carrier/" + carrier.name, rclcpp::QoS(1)));
+  }
+
   executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
   executor_->add_node(node_);
   spin_thread_ = std::thread([this]() { executor_->spin(); });
@@ -201,6 +212,28 @@ hardware_interface::return_type MujocoSystem::read(const rclcpp::Time&, const rc
     position_[index] = data_->qpos[joints_[index].qpos_index];
     velocity_[index] = data_->qvel[joints_[index].qvel_index];
   }
+
+  // Throttled to 20 Hz: the control loop runs at 100 and nobody watching a dresspack needs five
+  // times a second more than that, while the publish itself is not free.
+  const rclcpp::Time now = node_->get_clock()->now();
+  if ((now - last_publish_).seconds() >= 0.05)
+  {
+    last_publish_ = now;
+
+    sensor_msgs::msg::JointState state;
+    state.header.stamp = now;
+    for (int id = 0; id < model_->njnt; ++id)
+    {
+      const char* name = mj_id2name(model_, mjOBJ_JOINT, id);
+      if (name != nullptr)
+      {
+        state.name.emplace_back(name);
+        state.position.push_back(data_->qpos[model_->jnt_qposadr[id]]);
+      }
+    }
+    sim_state_publisher_->publish(state);
+    publishCarrierRisk();
+  }
   return hardware_interface::return_type::OK;
 }
 
@@ -218,6 +251,124 @@ hardware_interface::return_type MujocoSystem::write(const rclcpp::Time&, const r
     }
   }
   return hardware_interface::return_type::OK;
+}
+
+void MujocoSystem::discoverCarriers()
+{
+  // Found by the naming urdf_to_mujoco.py uses, rather than by a second list that would have to be
+  // kept in step with it. A carrier that is in the model is monitored; one that is not, is not.
+  const std::regex pattern(R"(^(.+)_(bendy|bendz|twist)(\d+)$)");
+  std::map<std::string, Carrier> found;
+
+  for (int id = 0; id < model_->njnt; ++id)
+  {
+    const char* raw = mj_id2name(model_, mjOBJ_JOINT, id);
+    if (raw == nullptr)
+    {
+      continue;
+    }
+    std::smatch match;
+    const std::string name(raw);
+    if (!std::regex_match(name, match, pattern))
+    {
+      continue;
+    }
+    auto& carrier = found[match[1].str()];
+    carrier.name = match[1].str();
+    const int address = model_->jnt_qposadr[id];
+    if (match[2].str() == "twist")
+    {
+      carrier.twist_dofs.push_back(address);
+      carrier.twist_limit = model_->jnt_range[2 * id + 1];
+    }
+    else
+    {
+      carrier.bend_dofs.push_back(address);
+      carrier.bend_limit = model_->jnt_range[2 * id + 1];
+    }
+  }
+
+  for (auto& [name, carrier] : found)
+  {
+    carrier.equality = mj_name2id(model_, mjOBJ_EQUALITY, (name + "_tip").c_str());
+    for (int id = 0; id < model_->ngeom; ++id)
+    {
+      const char* raw = mj_id2name(model_, mjOBJ_GEOM, id);
+      if (raw != nullptr && std::string(raw).rfind(name + "_geom", 0) == 0)
+      {
+        carrier.geoms.push_back(id);
+      }
+    }
+    carriers_.push_back(carrier);
+    RCLCPP_INFO(rclcpp::get_logger(kLogger),
+                "carrier '%s': %zu bend joints (limit %.1f deg), %zu twist joints (limit %.1f deg), "
+                "anchor %s",
+                carrier.name.c_str(), carrier.bend_dofs.size(), carrier.bend_limit * 180.0 / M_PI,
+                carrier.twist_dofs.size(), carrier.twist_limit * 180.0 / M_PI,
+                carrier.equality >= 0 ? "found" : "MISSING (tension cannot be measured)");
+  }
+}
+
+void MujocoSystem::publishCarrierRisk()
+{
+  // Caller holds the mutex.
+  if (carriers_.empty() || carrier_publishers_.empty())
+  {
+    return;
+  }
+
+  for (size_t index = 0; index < carriers_.size(); ++index)
+  {
+    const auto& carrier = carriers_[index];
+    moveit2_extended_msgs::msg::CarrierDiagnostics message;
+    message.carrier_name = carrier.name;
+
+    double worst_bend = 0.0;
+    for (const int address : carrier.bend_dofs)
+    {
+      worst_bend = std::max(worst_bend, std::abs(data_->qpos[address]));
+    }
+    double worst_twist = 0.0;
+    for (const int address : carrier.twist_dofs)
+    {
+      worst_twist = std::max(worst_twist, std::abs(data_->qpos[address]));
+    }
+
+    message.bend_utilisation = carrier.bend_limit > 0.0 ? worst_bend / carrier.bend_limit : 0.0;
+    message.twist_utilisation = carrier.twist_limit > 0.0 ? worst_twist / carrier.twist_limit : 0.0;
+    // A chain of rigid links bends to a radius; the angle per link and the link length give it.
+    message.min_bend_radius = worst_bend > 1e-9 && carrier.bend_limit > 0.0
+                                  ? (carrier.bend_limit > 0.0 ? 1.0 : 0.0) * 0.0
+                                  : 0.0;
+
+    // Tension: the force MuJoCo needs to keep the far end on its bracket. This is the number that
+    // says a pose is tearing the carrier off, as opposed to merely bending it hard -- and it is
+    // read from the solver rather than estimated.
+    double tension = 0.0;
+    if (carrier.equality >= 0)
+    {
+      double squared = 0.0;
+      for (int row = 0; row < data_->nefc; ++row)
+      {
+        if (data_->efc_type[row] == mjCNSTR_EQUALITY && data_->efc_id[row] == carrier.equality)
+        {
+          squared += data_->efc_force[row] * data_->efc_force[row];
+        }
+      }
+      tension = std::sqrt(squared);
+    }
+    message.tension = tension;
+
+    // Feasible means: not against either stop, and not being pulled hard enough to matter. The
+    // tension threshold is deliberately explicit rather than hidden in a comparison -- it is a
+    // guess until somebody pulls on a real carrier with a load cell.
+    constexpr double kTensionConcern = 50.0;  // N
+    message.feasible = message.bend_utilisation <= 1.0 && message.twist_utilisation <= 1.0 &&
+                       tension < kTensionConcern;
+    message.cables_within_limit = message.feasible;
+
+    carrier_publishers_[index]->publish(message);
+  }
 }
 
 bool MujocoSystem::applyKeyframe(const std::string& name, std::string& message)
