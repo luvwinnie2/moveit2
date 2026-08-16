@@ -273,3 +273,32 @@ input.is-ref { color: #7fd3ff; font-family: ui-monospace, monospace; }
   color: var(--text);
 }
 .bt-fold:hover { background: var(--accent); color: #10141b; }
+
+/* ---- editor toolbar -------------------------------------------------------------------------- */
+
+.canvas-column { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.toolbar button { padding: 3px 9px; }
+.toolbar .sep { width: 1px; height: 18px; background: var(--line); }
+.toolbar .grow { flex: 1; }
+.toolbar .toggle { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
+.toolbar .toggle select { width: auto; padding: 2px 6px; }
+.toolbar .toggle input { width: auto; }
+.toolbar .search { width: 200px; flex: none; }
+.matches { display: flex; align-items: center; gap: 4px; font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted); }
+.matches button { padding: 1px 7px; }
+
+/* Search hits and the data-flow highlight are different questions, so they read differently: a
+   match is an outline, sharing a blackboard key is a tint. */
+.bt-node.match { box-shadow: 0 0 0 2px #d9a441; }
+.bt-node.current-match { box-shadow: 0 0 0 3px #ffcc55, 0 0 14px rgba(255, 204, 85, 0.5); }
+.bt-node.in-flow { background: #223448; }

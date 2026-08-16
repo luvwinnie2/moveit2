@@ -17,6 +17,14 @@ export interface BehaviorNodeData extends Record<string, unknown> {
   missing?: boolean;
   /** Descendants folded away under this node; 0 when it is expanded or a leaf. */
   hidden?: number;
+  /** Ports that exist but are not drawn, because the port-count limit cut them off. */
+  hiddenPorts?: number;
+  /** Matches the current search. */
+  match?: boolean;
+  /** IS the current search match, i.e. the one navigation is sitting on. */
+  current?: boolean;
+  /** Shares a blackboard key with the selected node -- the data-flow highlight. */
+  inFlow?: boolean;
   hasChildren?: boolean;
   onToggle?: (id: string) => void;
   id?: string;
@@ -30,6 +38,9 @@ export function BehaviorNode({ data }: NodeProps<BehaviorFlowNode>) {
     `cat-${data.category}`,
     data.status ? `st-${data.status}` : "",
     data.missing ? "missing" : "",
+    data.match ? "match" : "",
+    data.current ? "current-match" : "",
+    data.inFlow ? "in-flow" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -65,13 +76,13 @@ export function BehaviorNode({ data }: NodeProps<BehaviorFlowNode>) {
 
       {data.ports.length > 0 && (
         <div className="bt-ports">
-          {data.ports.slice(0, 3).map(([key, value]) => (
+          {data.ports.map(([key, value]) => (
             <span key={key} className="bt-port">
               <span className="bt-port-key">{key}</span>
               <span className={blackboardKey(value) ? "bt-port-ref" : "bt-port-val"}>{shorten(value)}</span>
             </span>
           ))}
-          {data.ports.length > 3 && <span className="bt-port more">+{data.ports.length - 3}</span>}
+          {(data.hiddenPorts ?? 0) > 0 && <span className="bt-port more">+{data.hiddenPorts}</span>}
         </div>
       )}
 

@@ -15,6 +15,7 @@ import "@xyflow/react/dist/style.css";
 
 import { api } from "./api";
 import {
+  blackboardKey,
   cloneTree,
   extractHeader,
   findNode,
@@ -31,6 +32,7 @@ import {
 } from "./btxml";
 import { layoutRuntime, layoutTree, NODE_HEIGHT, NODE_WIDTH } from "./layout";
 import { BehaviorNode, type BehaviorFlowNode } from "./components/BehaviorNode";
+import { useTreeHistory, withFreshIds } from "./useEditorState";
 import { Inspector } from "./components/Inspector";
 import { Palette } from "./components/Palette";
 import {
@@ -61,7 +63,17 @@ function Studio() {
   const [mode, setMode] = useState<Mode>("watch");
 
   const [objectiveName, setObjectiveName] = useState("");
-  const [tree, setTree] = useState<BtNode | null>(null);
+  const history = useTreeHistory();
+  const tree = history.tree;
+  /** Bumped to force a re-layout without recording an edit -- e.g. snapping a rejected drag back. */
+  const [nudge, setNudge] = useState(0);
+  const [clipboard, setClipboard] = useState<BtNode | null>(null);
+  const [search, setSearch] = useState("");
+  const [matchIndex, setMatchIndex] = useState(0);
+  /** How many ports to draw on each node. Pro settled on a dropdown here for the same reason: a
+   *  large tree is unreadable with every port shown and useless with none. */
+  const [portLimit, setPortLimit] = useState(3);
+  const [followActive, setFollowActive] = useState(true);
   const [treeId, setTreeId] = useState("");
   const [header, setHeader] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -74,7 +86,7 @@ function Studio() {
   const [notice, setNotice] = useState("");
   const [parameters, setParameters] = useState("");
 
-  const { getIntersectingNodes, fitView } = useReactFlow();
+  const { getIntersectingNodes, fitView, setCenter } = useReactFlow();
   const laidOutInstance = useRef("");
 
   // --- data ------------------------------------------------------------------------------------
@@ -115,7 +127,7 @@ function Studio() {
     }
     const parsed = parseObjective(payload.xml);
     setObjectiveName(name);
-    setTree(parsed.root);
+    history.reset(parsed.root);
     setTreeId(parsed.treeId || name);
     setHeader(extractHeader(payload.xml));
     setSelectedId(parsed.root?.id ?? null);
@@ -127,7 +139,7 @@ function Studio() {
     setDirty(false);
     setNotice("");
     setMode("edit");
-  }, []);
+  }, [history]);
 
   // --- graph -----------------------------------------------------------------------------------
 
@@ -139,6 +151,52 @@ function Studio() {
       return next;
     });
   }, []);
+
+  /** Nodes whose name, registration, port name or port value contains the search text. */
+  const matches = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    if (!needle || !tree) return [] as string[];
+    return flatten(tree)
+      .filter((node) => {
+        if (node.name.toLowerCase().includes(needle)) return true;
+        if (node.registration.toLowerCase().includes(needle)) return true;
+        return Object.entries(node.attrs).some(
+          ([key, value]) => key.toLowerCase().includes(needle) || value.toLowerCase().includes(needle),
+        );
+      })
+      .map((node) => node.id);
+  }, [search, tree]);
+
+  /** Blackboard keys the selected node reads or writes.
+   *
+   *  Data flow is the part of a Behavior Tree the picture normally hides: the edges show what runs
+   *  in what order, and say nothing about which node produced the value another one consumes.
+   *  Highlighting every node that touches the same key draws that second graph on demand. */
+  const flowKeys = useMemo(() => {
+    const node = findNode(tree, selectedId ?? "");
+    if (!node) return new Set<string>();
+    const keys = new Set<string>();
+    for (const value of Object.values(node.attrs)) {
+      const key = blackboardKey(value);
+      if (key) keys.add(key);
+    }
+    return keys;
+  }, [tree, selectedId]);
+
+  const flowNodes = useMemo(() => {
+    if (flowKeys.size === 0 || !tree) return new Set<string>();
+    const ids = new Set<string>();
+    for (const node of flatten(tree)) {
+      for (const value of Object.values(node.attrs)) {
+        const key = blackboardKey(value);
+        if (key && flowKeys.has(key)) {
+          ids.add(node.id);
+          break;
+        }
+      }
+    }
+    return ids;
+  }, [flowKeys, tree]);
 
   const editGraph = useMemo(() => {
     const placed = layoutTree(tree, collapsed);
@@ -153,7 +211,11 @@ function Studio() {
         category: categoryOf(entry.node.registration, behaviorByName),
         order: entry.order,
         siblingCount: entry.siblingCount,
-        ports: Object.entries(entry.node.attrs),
+        ports: Object.entries(entry.node.attrs).slice(0, portLimit),
+        hiddenPorts: Math.max(0, Object.keys(entry.node.attrs).length - portLimit),
+        match: matches.includes(entry.node.id),
+        current: matches[matchIndex] === entry.node.id,
+        inFlow: flowNodes.has(entry.node.id),
         missing: !behaviorByName.has(entry.node.registration) && behaviors.length > 0,
         hidden: entry.hidden,
         hasChildren: entry.node.children.length > 0,
@@ -170,7 +232,8 @@ function Studio() {
         type: "smoothstep",
       }));
     return { nodes, edges };
-  }, [tree, selectedId, behaviorByName, behaviors.length, collapsed, toggleCollapse]);
+  }, [tree, selectedId, behaviorByName, behaviors.length, collapsed, toggleCollapse,
+      portLimit, matches, matchIndex, flowNodes, nudge]);
 
   const watchGraph = useMemo(() => {
     const runtimeNodes = state?.tree?.nodes ?? [];
@@ -220,11 +283,14 @@ function Studio() {
   const selectedParent = useMemo(() => findParent(tree, selectedId ?? ""), [tree, selectedId]);
   const selectedOrder = selectedParent && selected ? selectedParent.children.findIndex((c) => c.id === selected.id) : 0;
 
-  const mutate = useCallback((next: BtNode | null) => {
-    setTree(next);
-    setDirty(true);
-    setValidation(null);
-  }, []);
+  const mutate = useCallback(
+    (next: BtNode | null) => {
+      history.commit(next);
+      setDirty(true);
+      setValidation(null);
+    },
+    [history],
+  );
 
   const addChild = useCallback(
     (behavior: BehaviorInfo) => {
@@ -234,6 +300,45 @@ function Studio() {
       setSelectedId(child.id);
     },
     [tree, selectedId, mutate],
+  );
+
+  const copySelected = useCallback(() => {
+    const node = findNode(tree, selectedId ?? "");
+    if (node) {
+      setClipboard(cloneTree(node));
+      setNotice(`copied ${node.name || node.registration} and its ${flatten(node).length - 1} children`);
+    }
+  }, [tree, selectedId]);
+
+  const pasteIntoSelected = useCallback(() => {
+    if (!tree || !selectedId || !clipboard) return;
+    // Fresh ids, or pasting the same clipboard twice would produce two nodes claiming one identity
+    // and every lookup would find the first.
+    const copy = withFreshIds(clipboard);
+    mutate(insertChild(tree, selectedId, copy));
+    setSelectedId(copy.id);
+  }, [tree, selectedId, clipboard, mutate]);
+
+  const duplicateSelected = useCallback(() => {
+    if (!tree || !selectedId) return;
+    const node = findNode(tree, selectedId);
+    const parent = findParent(tree, selectedId);
+    if (!node || !parent) return; // the root has nowhere to be duplicated to
+    const copy = withFreshIds(node);
+    const at = parent.children.findIndex((c) => c.id === selectedId) + 1;
+    mutate(insertChild(tree, parent.id, copy, at));
+    setSelectedId(copy.id);
+  }, [tree, selectedId, mutate]);
+
+  const setAllCollapsed = useCallback(
+    (folded: boolean) => {
+      if (!folded) {
+        setCollapsed(new Set());
+        return;
+      }
+      setCollapsed(new Set(flatten(tree).filter((n) => n.children.length > 0 && n.id !== tree?.id).map((n) => n.id)));
+    },
+    [tree],
   );
 
   const onNodeClick: NodeMouseHandler = useCallback((_event, node) => {
@@ -255,13 +360,13 @@ function Studio() {
       });
       const target = overlapping.find((candidate) => candidate.id !== node.id);
       if (!target) {
-        setTree((current) => (current ? cloneTree(current) : current)); // snap back
+        setNudge((n) => n + 1); // snap back to the computed position; not an edit
         return;
       }
       const next = reparent(tree, node.id, target.id);
       if (next === tree) {
         setNotice("that would put the node inside itself");
-        setTree(cloneTree(tree));
+        setNudge((n) => n + 1);
         return;
       }
       setNotice("");
@@ -308,6 +413,46 @@ function Studio() {
     setNotice(result.ok ? `running ${target}` : result.error);
     if (result.ok) setMode("watch");
   }, [parameters, objectiveName, state]);
+
+  useEffect(() => {
+    const id = matches[matchIndex];
+    if (!id) return;
+    const node = graph.nodes.find((n) => n.id === id);
+    if (node) setCenter(node.position.x + NODE_WIDTH / 2, node.position.y + NODE_HEIGHT / 2, { zoom: 0.9, duration: 250 });
+  }, [matchIndex, matches, graph.nodes, setCenter]);
+
+  // Keyboard shortcuts. Bound on the window rather than the canvas because React Flow swallows
+  // key events on its own pane, and an undo that only works when the graph has focus is an undo
+  // people stop trusting.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      if (!(event.ctrlKey || event.metaKey)) return;
+      const key = event.key.toLowerCase();
+      if (key === "z" && !event.shiftKey) { event.preventDefault(); history.undo(); }
+      else if ((key === "z" && event.shiftKey) || key === "y") { event.preventDefault(); history.redo(); }
+      else if (key === "c") { event.preventDefault(); copySelected(); }
+      else if (key === "v") { event.preventDefault(); pasteIntoSelected(); }
+      else if (key === "d") { event.preventDefault(); duplicateSelected(); }
+      else if (key === "f") { event.preventDefault(); document.querySelector<HTMLInputElement>(".search")?.focus(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [history, copySelected, pasteIntoSelected, duplicateSelected]);
+
+  // Pan to whatever is ticking. Only while watching, and only when the node actually changes, or
+  // the viewport would fight the operator every frame.
+  const followedNode = useRef("");
+  useEffect(() => {
+    if (mode !== "watch" || !followActive) return;
+    const running = Object.entries(state?.statuses ?? {}).find(([, code]) => STATUS_BY_CODE[code] === "running");
+    const uid = running?.[0];
+    if (!uid || uid === followedNode.current) return;
+    followedNode.current = uid;
+    const node = graph.nodes.find((n) => n.id === uid);
+    if (node) setCenter(node.position.x + NODE_WIDTH / 2, node.position.y + NODE_HEIGHT / 2, { zoom: 0.8, duration: 300 });
+  }, [mode, followActive, state?.statuses, graph.nodes, setCenter]);
 
   // --- render ----------------------------------------------------------------------------------
 
@@ -395,6 +540,60 @@ function Studio() {
           <Palette behaviors={behaviors} disabled={!selectedId} onAdd={addChild} />
         )}
 
+        <div className="canvas-column">
+          <div className="toolbar">
+            {mode === "edit" ? (
+              <>
+                <button type="button" title="undo (Ctrl+Z)" disabled={!history.canUndo} onClick={history.undo}>↶</button>
+                <button type="button" title="redo (Ctrl+Shift+Z)" disabled={!history.canRedo} onClick={history.redo}>↷</button>
+                <span className="sep" />
+                <button type="button" title="copy (Ctrl+C)" disabled={!selectedId} onClick={copySelected}>Copy</button>
+                <button type="button" title="paste as a child (Ctrl+V)" disabled={!selectedId || !clipboard} onClick={pasteIntoSelected}>Paste</button>
+                <button type="button" title="duplicate beside, with children (Ctrl+D)" disabled={!selectedParent} onClick={duplicateSelected}>Duplicate</button>
+                <span className="sep" />
+              </>
+            ) : (
+              <label className="toggle" title="keep the ticking node in view">
+                <input type="checkbox" checked={followActive} onChange={(e) => setFollowActive(e.target.checked)} />
+                Follow active
+              </label>
+            )}
+
+            <button type="button" title="collapse every branch" onClick={() => setAllCollapsed(true)}>Collapse all</button>
+            <button type="button" title="expand everything" onClick={() => setAllCollapsed(false)}>Expand all</button>
+
+            <label className="toggle" title="ports drawn on each node">
+              ports
+              <select value={portLimit} onChange={(e) => setPortLimit(Number(e.target.value))}>
+                <option value={0}>none</option>
+                <option value={1}>1</option>
+                <option value={3}>3</option>
+                <option value={5}>5</option>
+                <option value={99}>all</option>
+              </select>
+            </label>
+
+            <span className="grow" />
+
+            <input
+              className="search"
+              placeholder="search nodes and ports"
+              value={search}
+              spellCheck={false}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setMatchIndex(0);
+              }}
+            />
+            {search && (
+              <span className="matches">
+                <button type="button" disabled={!matches.length} onClick={() => setMatchIndex((i) => (i - 1 + matches.length) % matches.length)}>‹</button>
+                {matches.length ? `${matchIndex + 1}/${matches.length}` : "0"}
+                <button type="button" disabled={!matches.length} onClick={() => setMatchIndex((i) => (i + 1) % matches.length)}>›</button>
+              </span>
+            )}
+          </div>
+
         <div className="canvas">
           <ReactFlow
             nodes={graph.nodes}
@@ -425,6 +624,7 @@ function Studio() {
                 : "Nothing has run yet. Run an Objective and the tree appears here."}
             </p>
           )}
+        </div>
         </div>
 
         {mode === "edit" && (

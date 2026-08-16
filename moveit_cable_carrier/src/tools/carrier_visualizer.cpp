@@ -207,7 +207,15 @@ public:
         [this](const std::vector<rclcpp::Parameter>& p) { return onParameters(p); });
 
     markers_ = create_publisher<visualization_msgs::msg::MarkerArray>("cable_carrier_markers", 1);
-    driven_joints_ = create_publisher<sensor_msgs::msg::JointState>("joint_states", 10);
+    // Created ONLY when this node is meant to drive the arm. The drive_robot guard used to sit on
+    // the publish calls alone, so with it off this publisher existed and never sent anything --
+    // harmless in itself, but it made `ros2 topic info /joint_states` report two publishers, and
+    // that count is exactly how everything else in this workspace checks that one thing owns the
+    // arm. A check that cannot be trusted is worse than no check.
+    if (get_parameter("drive_robot").as_bool())
+    {
+      driven_joints_ = create_publisher<sensor_msgs::msg::JointState>("joint_states", 10);
+    }
     preview_robot_ = create_publisher<moveit_msgs::msg::DisplayRobotState>("carrier_preview_state",
                                                                           rclcpp::QoS(1).transient_local());
     status_ = create_publisher<std_msgs::msg::String>("cable_carrier_status", rclcpp::QoS(1).transient_local());
@@ -423,7 +431,10 @@ private:
    *  joint_state_publisher when this is on. */
   void driveRobot()
   {
-    if (!preview_state_ || !get_parameter("drive_robot").as_bool())
+    // driven_joints_ is null unless drive_robot was on at construction, so the parameter alone is
+    // not enough to check: turning drive_robot on at run time cannot conjure a publisher, and
+    // dereferencing the null one would take the node down rather than log a refusal.
+    if (!preview_state_ || !get_parameter("drive_robot").as_bool() || !driven_joints_)
     {
       return;
     }
@@ -536,7 +547,7 @@ private:
     // the marker is being touched. Publishing only on feedback leaves robot_state_publisher with
     // nothing between drags, TF goes stale, and both RViz and any TF lookup stop working -- which
     // looks exactly like "it does not move at some positions".
-    if (get_parameter("drive_robot").as_bool() && jmg_)
+    if (get_parameter("drive_robot").as_bool() && jmg_ && driven_joints_)
     {
       const auto& source = preview_state_ ? *preview_state_ : *state_;
       sensor_msgs::msg::JointState msg;
